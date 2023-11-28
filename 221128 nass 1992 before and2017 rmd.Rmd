@@ -1,0 +1,3350 @@
+---
+title: "220618 NASS reasssemble"
+output: html_document
+date: '2022-06-18'
+---
+
+# libraries
+
+```{R }
+library(tidyverse)
+options(dplyr.summarise.inform = FALSE)
+```
+
+# NASS 2017 pull again
+```{r }
+# nass2017 <- read_table2(gzfile("C:/Users/nianj/Downloads/2017_cdqt_data.txt.gz"))   
+
+nass2017 <- data.table::fread("https://www.nass.usda.gov/Publications/AgCensus/2017/Online_Resources/Census_Data_Query_Tool/2017_cdqt_data.txt.gz") 
+
+```
+
+## mutate description
+```{r setup, include=FALSE}
+nass2017_recon <- nass2017 %>% 
+  janitor::clean_names()%>% 
+  filter(
+    nchar(county_code) >=3,
+    agg_level_desc == "COUNTY"
+  ) %>% 
+  mutate(
+    GEOID = paste0( 
+          str_pad(
+            state_fips_code,width = 2, side = "left", pad = "0" 
+            ) ,
+          str_pad(
+            county_code,width = 3, side = "left", pad = "0" 
+            )
+      ),
+     
+ 
+   Description = case_when(
+     (is.na(domaincat_desc)| domaincat_desc =="") ~  paste0(short_desc),
+     # !is.na(domaincat_desc) ~  paste0(short_desc, "; ",domaincat_desc  )
+    TRUE ~  paste0(short_desc, "; ",domaincat_desc  )
+
+     ),
+   
+  year = 2017
+  ) %>% 
+  # filter(
+  #   GEOID == "36009"
+  # ) %>% 
+  group_by(
+    GEOID, Description, value
+  ) %>% 
+  slice(1) %>%
+  # rename(
+  #   state = state_alpha
+  # ) %>% 
+  # select(
+  #   GEOID,year, Description, value 
+  # ) %>% 
+  # distinct() %>% 
+  group_by(
+    GEOID,year, Description  
+  ) %>% 
+  mutate(
+    countn = n()
+  ) %>%
+  arrange(-countn, rev(GEOID)) %>% 
+  ungroup()
+
+nass2017_recon<-nass2017_recon %>% 
+  ungroup()
+  
+nass2017_recon_descrip <- nass2017_recon%>% 
+  group_by(
+    Description
+  ) %>% 
+  summarise(
+    count_unique_county = length(unique(GEOID))
+  ) %>% 
+  ungroup() %>% 
+  arrange(
+    -count_unique_county
+  )
+nass2017_recon%>% glimpse()
+
+nass2017_recon_descrip %>%
+  mutate(year = 2017) %>% 
+  writexl::write_xlsx(
+   "//jna_nol/asus/msi/work/NASS 1992 and before/output/2017_48_varnames.xlsx" 
+  )
+
+
+nass2017_recon%>% 
+  ungroup() %>% 
+  mutate(
+    fips = as.numeric(GEOID)  
+  ) %>% 
+  select(
+    Description, year, fips, value
+  ) %>% 
+  distinct() %>% 
+  feather::write_feather(
+   "//jna_nol/asus/msi/work/NASS 1992 and before/output/2017_48_dataset.feather" 
+  )
+  
+```
+
+```{r }
+nass1997 <- feather::read_feather(
+  "//jna_nol/asus/msi/work/NASS 1992 and before/output/1997_43_dataset.feather"
+)
+```
+
+## find fertilizer
+```{R }
+fertiliz <- nass2017_recon %>% 
+  # select(Description) 
+  filter(
+    grepl("fertil", Description,ignore.case = TRUE)
+  ) %>% 
+  group_by(
+    Description
+  ) %>% 
+  summarise(
+    count_county = length(unique(GEOID))
+  )
+seed <- nass2017_recon %>% 
+  # select(Description) 
+  filter(
+    grepl("seed", Description,ignore.case = TRUE)
+  ) %>% 
+  group_by(
+    Description
+  ) %>% 
+  summarise(
+    count_county = length(unique(GEOID))
+  )
+tractor <- nass2017_recon %>% 
+  # select(Description) 
+  filter(
+    grepl("tractor", Description,ignore.case = TRUE)
+  ) %>% 
+  group_by(
+    Description
+  ) %>% 
+  summarise(
+    count_county = length(unique(GEOID))
+  )
+
+    
+broiler_2012 <- readxl::read_excel(
+  "//jna_nol/asus/msi/work/NASS 1992 and before/output/2012_47_varnames.xlsx"
+) %>% 
+  filter(
+    grepl("broiler", Description, ignore.case = TRUE)
+  )
+```
+
+# Pull in 2022
+
+```{r }
+
+nasspull2022 <- function(x){
+  # require(data.table)
+  # x <- nass2022$filepaths[1]
+  
+  nasspullcurrentdf <- data.table::fread(
+    x
+  )
+  
+  nasspullcurrentname <- gsub(".*/", "", x)
+  
+  nasspullcurrentdf_filter <- nasspullcurrentdf%>% 
+    mutate(
+      value = as.numeric(gsub(",", "", VALUE, perl = TRUE))
+    ) %>% 
+    filter(
+      !is.na(value)
+    )  
+  nasspullcurrentdf_filter2 <- nasspullcurrentdf_filter %>% 
+    mutate(
+        GEOID = paste0(
+          str_pad(
+            STATE_FIPS_CODE,width = 2, side = "left", pad = "0"
+            ),
+            str_pad(
+            COUNTY_CODE,width = 3, side = "left", pad = "0"
+            ) 
+          ) ,
+   Description = case_when(
+     (is.na(DOMAINCAT_DESC)| DOMAINCAT_DESC =="") ~  paste0(SHORT_DESC),
+     # !is.na(DOMAINCAT_DESC) ~  paste0(short_desc, "; ",domaincat_desc  )
+     TRUE ~ paste0(SHORT_DESC, "; ",DOMAINCAT_DESC  )
+     )
+    )
+nasspullcurrentdf_filter3 <-  nasspullcurrentdf_filter2 %>% 
+    #  select(
+    #   GEOID, Description, AGG_LEVEL_DESC, LOCATION_DESC, YEAR, value
+    # )%>% 
+    rename(
+      fips = GEOID,
+      year = YEAR,
+    ) %>% 
+  select(
+    Description, year, fips, value, AGG_LEVEL_DESC, LOCATION_DESC, FREQ_DESC, REFERENCE_PERIOD_DESC 
+  ) %>% 
+    distinct()
+  nasspullcurrentdf_filter3 %>% 
+    feather::write_feather(
+      paste0(
+        "//jna_nol/asus/msi/work/NASS 1992 and before/output/",
+        nasspullcurrentname,"_",
+        "dataset",
+        ".feather"
+        
+      )
+    )
+  nasspullcurrentdf_filter4_out <- nasspullcurrentdf_filter3%>% 
+    group_by(
+      Description, year, AGG_LEVEL_DESC, FREQ_DESC
+    ) %>% 
+    summarise(
+      countnum = length(unique(fips))
+    ) %>% 
+    ungroup() 
+  
+  nasspullcurrentdf_filter4_out %>% 
+    arrange(-countnum) %>% 
+  # select(
+  #   Description, year, fips, value, AGG_LEVEL_DESC, LOCATION_DESC, FREQ_DESC, REFERENCE_PERIOD_DESC 
+  # ) %>% 
+    writexl::write_xlsx(
+      paste0(
+       "//jna_nol/asus/msi/work/NASS 1992 and before/output/", 
+        nasspullcurrentname,"_",
+        "varnames",
+        ".xlsx"
+        
+      )
+    )
+  nasspullcurrentdf_filter4_out
+}
+
+```
+
+```{r }
+  require(parallel)
+  require(furrr)
+  require(tidyverse)
+  require(tidytext)
+require(callr)
+  require(pdftools)
+  options(future.globals.maxSize= 891289600)
+require(tesseract)
+require(future.callr)
+  
+  # cl <- makePSOCKcluster(detectCores() - 2)
+
+plan("callr", workers =90)
+
+nass2022 <- tibble(
+  filepaths = list.files(
+  path = "//jna_nol/asus/msi/work/NASS 1992 and before/new nass", 
+  pattern = "qs", recursive = FALSE, full.names = TRUE)
+  )%>% 
+  filter(
+    !grepl("~",filepaths )
+  ) %>% 
+  mutate(
+    GEOID = furrr::future_map(
+      filepaths,
+      ~nasspull2022(.x)
+                       
+  )
+  )%>% 
+  unnest() %>% 
+  arrange(
+    -countnum
+  )
+nass2022 <- tibble(
+  filepaths = list.files(
+  path = "//jna_nol/asus/msi/work/NASS 1992 and before/new nass", 
+  pattern = "animals_products", recursive = FALSE, full.names = TRUE)
+  )%>% 
+  filter(
+    !grepl("~",filepaths )
+  ) %>% 
+  mutate(
+    GEOID = furrr::future_map(
+      filepaths,
+      ~data.table::fread(.x)
+                       
+  )
+  ) %>% 
+  unnest()
+
+```
+
+# Try reading in 2012 pre 
+
+```{R }
+# sample_codebook <- tabulizer::extract_tables("C:/Users/nianj/Downloads/DS0039/35206-0039-Codebook.pdf" )
+
+```
+
+## Set up loop
+```{r }
+
+list_of_census <- tibble(
+  filepath_full= list.files(
+  path = "//jna_nol/asus/msi/work/NASS 1992 and before/ICPSR_35206", 
+  recursive = TRUE, 
+  pattern = "rda$", 
+  full.names = TRUE
+),
+filepath_file = list.files(
+  path = "//jna_nol/asus/msi/work/NASS 1992 and before/ICPSR_35206", 
+  recursive = TRUE, 
+  pattern = "rda$", 
+  full.names = FALSE
+)
+) %>% 
+  mutate(
+    number_file = 
+      gsub("\\/.*|DS00", "", filepath_file)#, 
+    # DS =  gsub("\\/.*|DS00", "", filepath_file)
+  ) %>% 
+  filter(
+    number_file >= as.numeric(number_file)
+  ) %>% 
+  filter(
+    number_file >= 34
+  )
+  load_first_object <- function(fname){
+    e <- new.env(parent = parent.frame())
+    load(fname, e)
+    return(e[[ls(e)[1]]])
+}
+yearExtract <- function(string) {
+  t <- regmatches(string, regexec("[0-9]{4}", string))
+  sapply(t, function(x) {
+    if(length(x) > 0){
+      return(as.numeric(x))
+    } else {
+      return(NA)    
+    }
+  })
+}
+
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+i <- 1 
+outname <- "//jna_nol/asus/msi/work/NASS 1992 and before/output/"
+while(i <= nrow(list_of_census))
+{
+  # currentfile <- list_of_census %>% 
+  #   mutate
+  # n_df <- readRDS( list_of_census[i]) 
+  #https://stackoverflow.com/questions/8547919/getting-the-name-of-a-dataframe-from-loading-a-rda-file-in-r
+  obj_loaded <- load_first_object(
+    list_of_census$filepath_full[i]
+  )%>% 
+   janitor::clean_names() 
+  
+  # likely_year = 
+ # obj_loaded_cle <- obj_loaded %>% 
+ #   janitor::clean_names() 
+ 
+ if("fips" %in% c(obj_loaded %>% names()))
+ {
+   
+# l <- attributes(obj_loaded)# Gives you list of the labeled variables
+
+      names_number_noflag <-  names(obj_loaded[,grep("\\d", colnames(obj_loaded))]) %>% 
+      .[!grepl("flag", .)]
+    
+ obj_loaded_varnames <- tibble(
+    Description = attributes(obj_loaded)$variable.labels, 
+    name_orig = names(obj_loaded)
+  ) %>% 
+    filter(
+      !grepl("flag",name_orig )
+    )
+
+# obj_loaded %>% 
+#   select(
+#     item01035,item01036, item03001,item03002,  item03046, everything() 
+#   ) %>% 
+#   
+#   # filter(
+#   #   grepl("expens", item01035, perl = TRUE, ignore.case= TRUE)
+#   #   # colname_orig == "data1_36"
+#   # ) %>% 
+#   View()
+    
+obj_loaded_keep <-  obj_loaded  %>% 
+   select(
+    fips, name
+   ) %>% 
+  cbind(
+    obj_loaded %>% 
+      select(
+        any_of(names_number_noflag)
+      )
+    # obj_loaded[,grep("\\d", colnames(obj_loaded))] 
+   ) %>% 
+  # select(
+  #   !contains("flag")
+  # ) %>% 
+  gather(
+   key = colname_orig,
+   value = value,
+   names_number_noflag 
+    
+  ) %>% 
+  left_join(
+    obj_loaded_varnames, 
+    by = c("colname_orig" = "name_orig")
+  )  
+
+obj_loaded_keep %>% 
+  filter(
+    !is.na(value)
+  ) %>% 
+  filter(
+    Description == "Farms (number), 1978"
+    # grepl("expens", Description, perl = TRUE, ignore.case= TRUE)
+    # colname_orig == "data1_36"
+  ) %>% 
+  arrange(
+    fips
+  )%>% 
+  View()
+
+likely_year = Mode(
+  (obj_loaded_varnames %>% 
+  head(1000) %>% 
+  mutate(
+    likely_year = yearExtract(Description)
+  ))$likely_year
+)
+  
+ obj_loaded_keep <- obj_loaded_keep %>% 
+   mutate(
+     year = likely_year
+   )
+
+obj_loaded_varnames %>% 
+  mutate(
+    year = likely_year
+  ) %>% 
+  writexl::write_xlsx(
+    paste0(
+      outname,   likely_year, "_",list_of_census$number_file[i], "_varnames.xlsx"
+    )
+  )
+
+obj_loaded_keep %>% 
+  feather::write_feather(
+    paste0(
+      outname,   likely_year, "_", list_of_census$number_file[i], "_dataset.feather"
+    )
+  )
+
+ }
+ 
+i <- i+1
+
+}
+
+```
+
+# Just make one giant list of var names
+```{r }
+nass_varnames <- tibble(
+  filepaths = list.files(
+    path = "//jna_nol/asus/msi/work/NASS 1992 and before/output", 
+    pattern = "varnames", recursive = FALSE, full.names = TRUE)
+)%>% 
+  mutate(
+    filename = gsub(".*/", "",filepaths )
+  )%>% 
+  
+  filter(
+    grepl("1978|1982|1987|1992|1997|2002|2007|2012|2017", filename, perl = TRUE) , 
+    !grepl("~", filepaths, perl = TRUE)
+  ) %>% 
+  mutate(
+    GEOID = furrr::future_map(
+      filepaths,
+      ~readxl::read_excel(.x)
+                       
+  )
+  ) %>% 
+  unnest()  
+nass_varnames2 <- nass_varnames%>% 
+  mutate(
+    rownum = row_number(), 
+    rmyear = paste0(", ", year)
+  )%>% 
+  group_by(
+    rownum
+  ) %>% 
+  mutate(
+    Description_edit = gsub(rmyear, "",Description )
+  ) %>% 
+  ungroup()
+nass_varnames2 %>% 
+  select(
+    Description, Description_edit, name_orig, year, count_unique_county
+  ) %>% 
+  distinct() %>% 
+  writexl::write_xlsx(
+    "//jna_nol/asus/msi/work/NASS 1992 and before/var_names_after_1978/231123_varnames_after1978.xlsx"
+  )
+
+```
+
+# Standardize names 
+
+## Pull in var names
+```{r }
+
+compiled_varnames_df <- tibble(
+  filepaths = list.files(
+  path = "//jna_nol/asus/msi/work/NASS 1992 and before/output", 
+  pattern = "varnames", recursive = FALSE, full.names = TRUE)
+  )%>% 
+  filter(
+    !grepl("~",filepaths )
+  ) %>% 
+  mutate(
+    GEOID = purrr::map(
+      filepaths,
+      ~readxl::read_excel(.x)
+                       
+  )
+  ) %>% 
+  unnest()
+
+```
+
+
+
+## function to re output var names
+```{r }
+function_output_varnames <- function(x =compiled_varnames_df, year_needed) {
+x%>% 
+   select(
+     -filepaths
+   ) %>% 
+   filter(
+     year == year_needed
+   ) %>% 
+   group_by(
+     Description, name_orig
+   ) %>% 
+   slice(1) %>% 
+   ungroup()%>%
+   writexl::write_xlsx(
+     paste0(
+     "X:/msi/work/NASS 1992 and before/output/1974/220710_", year_needed,"varnames.xlsx"
+   ))
+}
+```
+
+```{r }
+function_output_varnames(x =compiled_varnames_df, year_needed= 1968)
+function_output_varnames(x =compiled_varnames_df, year_needed= 1978)
+
+```
+
+```{r }
+   function_output_varnames
+ compiled_varnames_df %>% 
+   select(
+     -filepaths
+   ) %>% 
+   filter(
+     year == 1974
+   ) %>% 
+   group_by(
+     Description, name_orig
+   ) %>% 
+   slice(1) %>% 
+   ungroup()%>%
+   writexl::write_xlsx(
+     "X:/msi/work/NASS 1992 and before/output/1974/220710_1974varnames.xlsx"
+   )
+ compiled_varnames_df %>% 
+   select(
+     -filepaths
+   ) %>% 
+   filter(
+     year == 1978
+   ) %>% 
+   group_by(
+     Description, name_orig
+   ) %>% 
+   slice(1) %>% 
+   ungroup()%>%
+   writexl::write_xlsx(
+     "X:/msi/work/NASS 1992 and before/output/1974/220710_1978varnames.xlsx"
+   )
+
+```
+
+```{r }
+
+extract_bracket <- function(x) {
+     require("rebus")
+
+   pattern <-  OPEN_BRACKET %R% ".*?" %R% CLOSE_BRACKET
+# x %>%
+  # make a new colum of the data inside and outside of the parenthesis
+  # dplyr::mutate(
+    str_extract_all(x, pattern)
+   #%>% 
+  # the INSIDE colum is nested as it has more then one value per original data row (see first use of pattern extraction) so we have to unnest to get back to rectangular data
+ # tidyr::unnest(units)
+}
+```
+
+```{r }
+
+extract_parenth <- function(x) {
+     require("rebus")
+
+   pattern <-  OPEN_PAREN %R% ".*?" %R% CLOSE_PAREN
+   # require("rebus")
+
+  # make a new colum of the data inside and outside of the parenthesis
+   stringr::str_extract_all(x, pattern)
+    #%>% 
+  # the INSIDE colum is nested as it has more then one value per original data row (see first use of pattern extraction) so we have to unnest to get back to rectangular data
+ # tidyr::unnest(units)
+}
+```
+
+
+```{r }
+extract_paren <- function(x) {
+     require("rebus")
+
+   pattern <-  OPEN_PAREN %R% ".*?" %R% CLOSE_PAREN
+x %>%
+  # make a new colum of the data inside and outside of the parenthesis
+  dplyr::transmute(
+    units = stringr::str_extract_all(Description, pattern)
+    )%>% 
+  # the INSIDE colum is nested as it has more then one value per original data row (see first use of pattern extraction) so we have to unnest to get back to rectangular data
+  tidyr::unnest(units)
+}
+
+units_LU <-    compiled_varnames_df %>%  
+  extract_paren(.) %>% 
+  select(
+    units
+  ) %>% 
+  distinct()
+```
+
+## d
+
+```{r }
+
+base_2012_vars_df <- compiled_varnames_df %>% 
+  # filter(
+  #   year == 2012
+  # ) %>% 
+  mutate(
+    likely_varyear =  yearExtract(Description), 
+    likely_varyear = case_when(
+      (is.na(likely_varyear))|( !between(likely_varyear, 1960, 2012)  ) ~ year, 
+      TRUE ~ likely_varyear
+    ),
+    rowna = row_number()
+#     unit = paste(str_extract_all(Description,  "(?<=\\().+?(?=\\))")
+# [[1]], collapse = ", ")
+  )  %>%
+  group_by(
+    rowna
+  ) %>%
+  mutate(
+        Descrip_trim = gsub(paste0(", ", likely_varyear), "", Description)
+
+  ) %>% 
+  ungroup()
+
+```
+ 
+
+```{r }
+# da35206.0036 %>% writexl::write_xlsx("C:/Users/nianj/Downloads/2208excel.xlsx")
+n <- ncol(da35206.0036)
+
+#extract labels as vector
+# labels <- map_chr(1:n, function(x) attr(da35206.0036[[x]], "label") )
+attributes(da35206.0036)$variable.labels -> labels
+
+labeldf <- tibble(
+  label = labels, 
+  itemid = names(da35206.0036)
+)
+
+lut <- tibble(Qr = df2 %>% select(-ID) %>% names) %>% 
+  mutate(label = map_chr(Qr, ~ get_label(df2[[.]])))
+
+lookup <- function(x) lut %>% filter(label == x) %>% pull(Qr)
+```
+
+# Extract variable names
+
+```{r }
+library(tidyverse)
+library(rvest)
+library(lubridate)
+library(jsonlite)
+# https://stackoverflow.com/questions/66624575/how-can-i-scrape-a-table-from-a-website-in-r
+htm_obj <- 
+  read_html('https://www.icpsr.umich.edu/web/ICPSR/search/variables?start=20000&sort=VARLABEL_SORT%20asc&STUDYQ=35206&EXTERNAL_FLAG=1&ARCHIVE=ICPSR&rows=10000')
+
+str_apikey <-
+  html_node(htm_obj, xpath = '//script[@id="app-root-state"]') %>%
+  html_text() %>% gsub("^.*SUN_API_KEY&q;:&q;|&q;.*$", "", . )
+
+pull_table <- htm_obj %>%
+  html_nodes(xpath = '/html/body/div[3]/div/div/div[2]/div/div[1]/article')
+
+url_apijson <- paste0(
+  "https://api.weather.com/v1/location/KDCA:9:US/observations/historical.json?apiKey=",
+  str_apikey,
+  "&units=e&startDate=20110101&endDate=20110101")
+
+
+  htm_obj %>% 
+html_nodes("[class='list-group list-group-table player-group-table']") #//*[@id="results-body"]
+```
+
+## using selenium
+```{r }
+
+# https://stackoverflow.com/questions/70523556/div-in-html-seems-to-be-empty-web-scraping-in-r-with-rvest
+# https://community.rstudio.com/t/not-able-to-scrape-a-website/17489/2 
+
+# splashr might be helpful https://github.com/hrbrmstr/splashr 
+library(RSelenium)
+library(dplyr)
+library(rvest)
+driver = rsDriver(port = 4492L, browser = c("firefox"))
+remDr <- driver[["client"]]
+
+scrape_icpsr_varnames <- function(x){
+  require(RSelenium)
+  require(dplyr)
+  require(rvest)
+i <- 0
+rm(url)
+rm(item_element)
+rm(textlist)
+textlist <- list()
+while(i <= 100e3)
+{
+  #   require(RSelenium)
+  # require(dplyr)
+  # require(rvest)
+
+  url <- paste0(
+    "https://www.icpsr.umich.edu/web/ICPSR/search/variables?start=", i, "&sort=VARLABEL_SORT%20asc&STUDYQ=35206&EXTERNAL_FLAG=1&ARCHIVE=ICPSR&rows=10000"
+  )
+  remDr$navigate(url)
+
+item_element <- remDr$findElement(using = "xpath", '/html/body/div[3]/div/div/div[2]/div/div[1]/article')
+
+text_pulled <- item_element$getElementText()[[1]]
+# text_pulled_sample <- text_pulled %>% 
+#   substr(
+#     1,4000
+#   )
+# text_pulled_between <- qdapRegex::ex_between(text_pulled_sample, "ables", "udy")[[1]]
+
+# res <- str_match(text_pulled_sample, "numeric*(.*?)*udy")
+# res <- gsub(".*Var\\. Type\\\\nDataset\\\\n(.+)\\\\nTaken from: United States Agriculture Data.*", "\\1", text_pulled_sample, perl = TRUE)
+
+text_pulled_between <- qdapRegex::ex_between(
+  str_replace_all( 
+    text_pulled, "\\\\n|\n", "<br>" ), 
+  c(
+    "Var. Type<br>",
+    "<br>numeric<br>",
+   "<br>character<br>",
+      "<br>string<br>"
+
+
+    ),
+  c(
+    "<br>Taken from:",
+    "<br>Taken from:",
+    "<br>Taken from:",
+    "<br>Taken from:"
+
+
+    )
+  )[[1]]
+
+text_pulled_between2 <- tibble(
+varpull =  text_pulled_between
+) %>% 
+  separate(
+    varpull, c("Dataset", "Varshort", "Varfull" ), sep = "<br>", remove = FALSE
+  )
+
+text_pulled_between2 %>% 
+  writexl::write_xlsx(
+    paste0("X:/msi/work/NASS 1992 and before/scrape icpsr var names/220708varnamespg_", i, 
+           ".xlsx"
+           
+    )
+  )
+# textlist[[i+1]] 
+  i <- i+10000
+}
+paste(textlist  , collapse = "\\\\n")
+}
+
+get_text_icpsr_vars <- scrape_icpsr_varnames()
+remDr$close() # this is important
+
+
+
+url <- 'https://www.icpsr.umich.edu/web/ICPSR/search/variables?start=20000&sort=VARLABEL_SORT%20asc&STUDYQ=35206&EXTERNAL_FLAG=1&ARCHIVE=ICPSR&rows=10000'
+remDr$navigate(url)
+
+remDr$getPageSource()[[1]] %>% 
+    read_html() %>% html_nodes(xpath = '//*[@id="results-body"]') %>% 
+    html_table() 
+
+
+item_element <- remDr$findElement(using = "xpath", '//*[@id="results-body"]')
+items <- item_element$getElementText()[[1]]
+
+
+
+item_element <- remDr$findElement(using = "xpath", '/html/body/div[3]/div/div/div[2]/div/div[1]/article')
+
+items <- item_element$getElementText()[[1]]
+```
+
+# standardize var names
+
+## vars i want 
+```{r }
+
+vars_i_want <- readxl::read_excel(
+  "//jna_nol/asus/msi/work/farmer welfare/nass/220619 select nass vars.xlsx"
+)
+```
+
+```{r }
+    vars_i_want_clean <- vars_i_want %>% 
+      mutate(
+        variable_orig = variable,
+        variable = stemwords_func(
+          remove_stopwords_func(cleantext(variable))
+        ), 
+        units =  extract_bracket(variable_orig),
+        units_parenth = extract_parenth(variable_orig), 
+        units = 
+          case_when(
+            # grepl("operators",variable, ignore.case, perl = TRUE) ~ "operators",
+            as.character(units)!= "character(0)" ~ as.character(units), 
+            TRUE  ~ as.character(units_parenth)
+            # coalesce( units,units_parenth )
+          ), 
+        units = cleantext(units)
+      ) %>% 
+      mutate(
+        Description=variable
+      )%>% 
+      transform_units_func(.) %>% 
+      select(
+        -units_parenth,-Description
+      )%>% 
+      group_by(
+        variable 
+      )%>% 
+      slice(1) %>% 
+      ungroup()
+
+```
+
+## helper functions
+### stopwords
+```{r }
+stopwords_regex = paste(stopwords('en'), collapse = '\\b|\\b') %>% 
+  paste0(
+   '\\b',  ., '\\b'
+  )
+# stopwords_regex = paste0('\\b', stopwords_regex, '\\b')
+documents = stringr::str_replace_all(documents, stopwords_regex, '')
+
+```
+
+### transform units detect
+```{r }
+transform_units_func <- function(x){
+ 
+  transform_to_dataframe = tibble(
+    starter =  c(
+          "farm",#1
+          "operation",
+          "ac",
+          "bushel",
+          "\\$",#5
+          "percent",
+          "\\%",
+          "lb",
+          "bale",
+          "dol",#10
+          "doz",
+          "gal",
+           "worker",
+          "woker",
+          "head", #15
+          "num",
+          "operator",
+           "pound",
+          "qty",
+          "quantity", #20
+           "sq ft",
+          "t dry",
+           "ton",
+          "tree",
+          "vine", #25
+        "year"
+          )
+  ) %>% 
+    mutate(
+      tranto = paste0(
+        ".*", starter,".*"
+      )
+    )
+  
+  x %>%
+    mutate(
+      units = mgsub::mgsub(
+        string = cleantext(units) , 
+        pattern = transform_to_dataframe$tranto, 
+        # "regex",
+
+        replacement = c(
+          "operations",#1
+          "operations",#2
+          "acres",#3
+          "bushels",#4
+          "dollars",#5
+          "percent",#6
+          "percent",
+          "pounds",
+          "bales",
+          "dollars",#10
+          "dozen",
+          "gallons",
+          "number",
+          "number",
+           "number",#15
+          "number",
+          "number",
+           "pounds",
+          "number",
+          "number", #20
+           "sq ft",
+          "tons",
+           "tons",
+          "number",
+          "number", #25
+     "years"
+          )#, 
+     #   vectorize_all = FALSE
+        )
+    )%>%
+    mutate(
+      units = 
+        case_when(
+          grepl("perator", Description, perl = TRUE,ignore.case = TRUE) ~ "number", 
+          grepl("\\$", Description, perl = TRUE,ignore.case = TRUE) ~ "dollars", 
+          grepl("acre", Description, perl = TRUE,ignore.case = TRUE) ~ "acres",
+
+
+          TRUE ~ units
+         
+      )
+      ) %>% 
+    mutate(
+      units = as.character(units)
+    )
+  
+      # Description = str_squish(Description),
+      # units = case_when(
+      #   grepl("(acre", Description, perl = TRUE) ~ "acres",
+      #   grepl("(head", units, perl = TRUE) ~ "number",
+      #   grepl("(ton", units, perl = TRUE) ~ "tons",
+      #   grepl("(farm", units, perl = TRUE) ~ "operations",
+      #   grepl("(operation", units, perl = TRUE) ~ "operations",
+      #   grepl("($", units, perl = TRUE) ~ "$",
+      #   grepl("($", units, perl = TRUE) ~ "$",
+      #   grepl("(ton", units, perl = TRUE) ~ "tons",
+      #   grepl("($", units, perl = TRUE) ~ "$"
+      # 
+      
+      # )
+    # )
+  
+}
+
+```
+### rejoin varsfunc
+```{r }
+rejoin_to_orig_func <- function(x, compiled_varnames_df_func, vars_i_want_with_1969_df, if_sending_rerun = "no"){
+x_df <-  x %>% 
+    left_join(
+      compiled_varnames_df_func %>% 
+        select(
+          Description, Description_orig,units
+        ) %>% 
+        rename(
+          units_desc =units
+        ),
+      by = c("Description")
+      
+    )
+
+if(if_sending_rerun == "no")
+{
+  df_out <- x_df%>% 
+    left_join(
+      vars_i_want_clean  %>% 
+        select(
+          variable, variable_orig,units 
+          )%>% 
+        distinct()%>% 
+        rename(
+          units_var =units
+        ),
+          by = c("variable")
+ 
+    )
+  
+}
+if(if_sending_rerun != "no")
+{
+df_out <- x_df%>%  
+    left_join(
+      vars_i_want_with_1969_df %>% 
+        select(
+          variable, variable_orig,units 
+          )%>% 
+        distinct()%>%
+        rename(
+          units_var =units
+        ),
+          by = c("variable")
+ 
+    ) %>% 
+  left_join(
+    vars_i_want_with_1969_df %>%
+      rename(
+        Description = previous_Descrip_match
+      )%>%
+        select(
+          variable, Description 
+          ) %>% 
+      distinct() %>% 
+      mutate(
+        want = "x"
+      ), 
+    by = c("variable", "Description")
+  )
+}
+
+df_out %>% 
+    select(
+      variable_orig, Description_orig, value, everything()
+    )
+  
+}
+```
+
+## read back in 1969 vartemplate and get vars that we want
+
+### run func to read 1969 template
+```{r }
+read_templatevars_list <- function(x=1){
+  
+  
+vars1969_template <- tibble(
+  filepaths = list.files(
+  path = "X:/msi/work/NASS 1992 and before/var_manual_filters/", 
+  pattern = "template\\.xlsx$", recursive = FALSE, full.names = TRUE)
+  )%>% 
+  filter(
+    !grepl("~",filepaths )
+  ) %>% 
+  mutate(
+    GEOID = purrr::map(
+      filepaths,
+      ~readxl::read_excel(.x)
+                       
+  )
+  ) %>% 
+  unnest()
+
+vars_i_want_with_1969 <- vars_i_want_clean %>% 
+  select(
+    variable_orig, 
+    units
+  ) %>% 
+  filter(
+    !variable_orig %in% c(
+      (vars1969_template %>% 
+      filter(
+        want == "x"
+      ))$variable_orig
+    )
+  ) %>% 
+  bind_rows(
+    vars1969_template %>% 
+      filter(
+        want == "x"
+      ) %>% 
+      mutate(
+        variable_orig =  case_when(
+          is.na(variable_orig)~ Description_orig, 
+          TRUE ~ variable_orig
+        ), 
+        units =  as.character(extract_parenth(Description_orig) ),
+        units = cleantext(units)
+      ) %>% 
+      rename(
+        Description = Description_orig
+      ) %>% 
+      transform_units_func(.) %>% 
+      rename(
+        Description_orig = Description
+      )%>% 
+      select(
+        variable_orig, units, Description_orig, year
+      ) 
+  )%>% 
+  mutate(
+    # remove below because 
+    Description = clean_descriptionfunc(Description_orig),
+    variable =  
+      
+      case_when(
+        !is.na(Description_orig) ~ 
+        stemwords_func(
+      remove_stopwords_func(cleantext(variable_orig))
+        )
+    )
+  )%>%
+  #Description_orig only serves as example; 
+  group_by(
+    variable, Description
+  ) %>% 
+  # arrange(
+  #   desc(Description)
+  # ) %>% 
+  mutate(
+    year = paste(unique(year), collapse =", ")
+  )%>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  # left_join(
+  #   compiled_varnames_df_currentyear %>% 
+  #     select(
+  #       Description,units, Description_orig
+  #     ) , 
+  #   by = c( "units", "Description_orig") 
+  #   
+  # ) %>%
+  rename(
+    previous_Descrip_match = Description
+  ) %>% 
+  select(
+    -Description_orig
+  ) 
+  
+vars_i_want_with_1969
+
+}
+
+
+```
+
+```{r }
+# on second lop read back in 
+
+# vars1969_template <- readxl::read_excel(
+#   "X:/msi/work/NASS 1992 and before/var_manual_filters/variable_lookup1969_template.xlsx"
+# )
+
+vars1969_template <- tibble(
+  filepaths = list.files(
+  path = "X:/msi/work/NASS 1992 and before/var_manual_filters/", 
+  pattern = "template\\.xlsx$", recursive = FALSE, full.names = TRUE)
+  )%>% 
+  filter(
+    !grepl("~",filepaths )
+  ) %>% 
+  mutate(
+    GEOID = purrr::map(
+      filepaths,
+      ~readxl::read_excel(.x)
+                       
+  )
+  ) %>% 
+  unnest()
+
+readxl::read_excel(
+  "X:/msi/work/NASS 1992 and before/var_manual_filters/variable_lookup1969_template.xlsx"
+)
+
+
+vars1969_template_full <- readxl::read_excel(
+  "X:/msi/work/NASS 1992 and before/var_manual_filters/variable_lookup_template_full1969.xlsx"
+)
+
+```
+
+
+#### transform 
+```{r }
+vars_i_want_with_1969 <- vars_i_want_clean %>% 
+  select(
+    variable_orig, 
+    units
+  ) %>% 
+  filter(
+    !variable_orig %in% c(
+      (vars1969_template %>% 
+      filter(
+        want == "x"
+      ))$variable_orig
+    )
+  ) %>% 
+  bind_rows(
+    vars1969_template %>% 
+      filter(
+        want == "x"
+      ) %>% 
+      mutate(
+        variable_orig =  case_when(
+          is.na(variable_orig)~ Description_orig, 
+          TRUE ~ variable_orig
+        ), 
+        units =  as.character(extract_parenth(Description_orig) ),
+        units = cleantext(units)
+      ) %>% 
+      rename(
+        Description = Description_orig
+      ) %>% 
+      transform_units_func(.) %>% 
+      rename(
+        Description_orig = Description
+      )%>% 
+      select(
+        variable_orig, units, Description_orig, year
+      ) 
+  )%>% 
+  mutate(
+    # remove below because 
+    Description = clean_descriptionfunc(Description_orig),
+    variable =  
+      
+      case_when(
+        !is.na(Description_orig) ~ 
+        stemwords_func(
+      remove_stopwords_func(cleantext(variable_orig))
+        )
+    )
+  )%>%
+  #Description_orig only serves as example; 
+  group_by(
+    variable, Description
+  ) %>% 
+  # arrange(
+  #   desc(Description)
+  # ) %>% 
+  mutate(
+    year = paste(unique(year), collapse =", ")
+  )%>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  # left_join(
+  #   compiled_varnames_df_currentyear %>% 
+  #     select(
+  #       Description,units, Description_orig
+  #     ) , 
+  #   by = c( "units", "Description_orig") 
+  #   
+  # ) %>%
+  rename(
+    previous_Descrip_match = Description
+  ) %>% 
+  select(
+    -Description_orig
+  ) 
+  
+
+```
+
+### find vars
+```{r }
+findvars_func <- function(x){
+  vars_i_want_with_1969 %>% 
+  filter(
+    grepl(x,variable_orig, perl = TRUE, ignore.case = TRUE)
+  ) %>% 
+    View()
+}
+```
+
+## vars_loop
+
+### stem description function
+```{r }
+clean_descriptionfunc <- function(x){
+  
+stemwords_func(stringi::stri_replace_all_fixed( remove_stopwords_func(cleantext(x) ), pattern = c("farms", "except"), replacement = c("operations", "excl"), vectorize_all = FALSE))  
+}
+```
+
+### actual loop
+```{r }
+
+# i <- 1
+# vars_i_want_unique <- vars_i_want %>% unique()
+# 
+# while(i <= length(vars_i_want_unique))
+# {
+#   current_var_i_want <- vars_i_want_unique[i]
+  j<-1
+  years_unique <- compiled_varnames_df$year %>% unique()
+  found_match_nameslist <- list()
+  while(j<=length(num_years))
+  {
+   vars_i_want_with_1969 <- read_templatevars_list(x=1)
+    # pool of descriptions below
+    compiled_varnames_df_currentyear <-  compiled_varnames_df %>% 
+      filter(
+        year == years_unique[j]
+      )%>%
+      mutate(
+        Description_orig = Description,
+        Description = clean_descriptionfunc(Description_orig), 
+        units =  as.character(extract_parenth(Description_orig) ),
+        units = cleantext(units)
+      ) %>% 
+      transform_units_func(.) %>%
+      group_by(
+        Description
+      ) %>% 
+      slice(1)%>% 
+      ungroup()
+    # compiled_varnames_df_currentyear %>% 
+    # writexl::write_xlsx(
+    #   paste0("X:/msi/work/NASS 1992 and before/var_manual_filters/", 
+    #    "variable_lookup_template_full", years_unique[j], ".xlsx"      
+    #   )
+    # )
+ 
+ found_matched_names_google <- find_matchname_googsearch(
+        colname_base =  compiled_varnames_df_currentyear$Description,
+    colname_to_match = vars_i_want_with_1969$variable,  
+     extract_n_top = 100, 
+    df_send_want = vars_i_want_with_1969
+    )%>% 
+   rejoin_to_orig_func(
+     ., 
+     compiled_varnames_df_func =compiled_varnames_df_currentyear , 
+     vars_i_want_with_1969_df = vars_i_want_with_1969, 
+     if_sending_rerun = "yes"
+     ) %>% 
+   mutate(
+     searchtype = "google"
+   ) %>% 
+    filter(
+      units_var == units_desc
+    )
+ 
+  found_matched_names_google_jw <- find_matchname_jw(
+        colname_base =  found_matched_names_google$Description %>% unique(),
+    colname_to_match = found_matched_names_google$variable%>% unique(), 
+     extract_n_top = 100,
+    df_send = found_matched_names_google, 
+    df_send_want = vars_i_want_with_1969
+    )%>% 
+   rejoin_to_orig_func(
+     ., 
+     compiled_varnames_df_func =compiled_varnames_df_currentyear , 
+     vars_i_want_with_1969_df = vars_i_want_with_1969, 
+     if_sending_rerun = "yes"
+     ) %>% 
+   mutate(
+     searchtype = "google_jw"
+   )  %>% 
+    filter(
+      units_var == units_desc
+    )
+   found_matched_names_google_jw_google <- find_matchname_googsearch(
+        colname_base =  found_matched_names_google_jw$Description %>% unique(),
+    colname_to_match = found_matched_names_google_jw$variable%>% unique(), 
+    df_send = found_matched_names_google_jw, 
+    df_send_want = vars_i_want_with_1969,
+     extract_n_top = 50
+    ) %>% 
+   rejoin_to_orig_func(
+     ., 
+     compiled_varnames_df_func =compiled_varnames_df_currentyear , 
+     vars_i_want_with_1969_df = vars_i_want_with_1969, 
+     if_sending_rerun = "yes"
+     ) %>% 
+   mutate(
+     searchtype = "google_jw_google"
+   ) 
+   found_matched_names_google_jw_google_filter <- found_matched_names_google_jw_google %>% 
+     filter(
+       units_var == units_desc
+     ) # %>% 
+     # left_join(
+     #   vars_i_want_with_1969 %>% 
+     #     select(
+     #       variable, previous_Descrip_match
+     #     ) %>% 
+     #     mutate(
+     #       want = "x"
+     #     ), 
+     #   by = c("variable", "Description" = "previous_Descrip_match")
+     # )
+   # 
+  # found_matched_names_google_jw_google_filter %>% 
+  #   rename(
+  #     units = units_desc
+  #   ) %>% 
+  #   select(
+  #     contains("_orig"), value, units, everything()
+  #   ) %>% 
+  #   mutate(
+  #     year = years_unique[j]
+  #   ) %>% 
+  #   group_by(
+  #     variable_orig
+  #   ) %>% 
+  #   arrange(
+  #    variable_orig, -value 
+  #   ) %>% 
+  #   mutate(
+  #     rownum = case_when(
+  #       row_number()==1 ~ paste0(1),
+  #       TRUE ~ ""
+  #     )
+  #   ) %>% 
+  #   ungroup() %>% 
+  #   writexl::write_xlsx(
+  #     paste0("X:/msi/work/NASS 1992 and before/var_manual_filters/", 
+  #      "variable_lookup_template_full", years_unique[j], ".xlsx"      
+  #     )
+  #   )
+  
+  found_matched_names_google_jw_google_filter %>% 
+    rename(
+      units = units_desc
+    ) %>% 
+    mutate(
+      year = years_unique[j]
+    ) %>% 
+    group_by(
+      variable_orig
+    ) %>% 
+    arrange(
+     variable_orig, -value 
+    ) %>% 
+    mutate(
+      rownum = row_number()
+    ) %>% 
+    # mutate(
+    #   rownum = case_when(
+    #     row_number()==1 ~ paste0(1),
+    #     row_number()==1 ~ paste0(1),
+    # 
+    #     TRUE ~ ""
+    #   )
+    # ) %>% 
+    
+    ungroup() %>% 
+        select(
+      contains("_orig"), value, units,year, rownum, want
+    ) %>% 
+    # group_by(
+    #   variable, Desc
+    # )
+
+    writexl::write_xlsx(
+      paste0("X:/msi/work/NASS 1992 and before/var_manual_filters/", 
+       "variable_lookup", years_unique[j], ".xlsx"      
+      )
+    )
+    
+ # found_matched_names_widyr <- find_matchname_widyr(
+ #        colname_base =  compiled_varnames_df_currentyear$Description,
+ #    colname_to_match = vars_i_want_clean$variable, 
+ #     extract_n_top = 50
+ #    )
+ # found_matched_names_jw <- find_matchname_jw(
+ #        colname_base =  compiled_varnames_df_currentyear$Description,
+ #    colname_to_match = vars_i_want_clean$variable, 
+ #     extract_n_top = 50
+ #    ) 
+ 
+
+ 
+ 
+
+ # require(stevemisc)
+# found_matched_names_jw <- found_matched_names_jw %>%    rejoin_to_orig_func(.)%>% 
+#    mutate(
+#      searchtype = "jw"
+#    ) %>% 
+#    group_by(
+#      variable
+#    ) %>% 
+#    mutate(
+#      value = scales::rescale(stevemisc::revcode(value),to = c( min(value),max(value)))
+#    ) %>% 
+#   ungroup()
+# 
+#  found_matched_names_combine <- bind_rows(
+#    found_matched_names_google, 
+#    found_matched_names_jw
+#  ) %>% 
+#    group_by(
+#      variable_orig, Description_orig
+#    ) %>% 
+#    summarise(
+#      avg_score = mean(value, na.rm = TRUE)
+#    ) %>% 
+#    ungroup() %>% 
+#    # group_by(
+#    #   variable_orig
+#    # ) %>% 
+#    arrange(
+#      variable_orig,-avg_score
+#    )%>% 
+#    ungroup()
+ j <- j+1
+}
+  
+```
+
+### handy clean stop words or cleantext functions
+```{r }
+
+#   cleantext <- function(x){
+#   stripWhitespace(str_squish(removeNumbers(removePunctuation(tolower(gsub("[^[:alpha:]$ ]", " ", x))))))
+# } 
+  cleantext <- function(x){
+    require(tm)
+  stripWhitespace(str_squish(tolower(gsub("[^[:alpha:]$ ]", " ", x))))
+  } 
+
+remove_stopwords_func <- function(x){
+  stringr::str_replace_all(x, stopwords_regex, '' )
+  
+}
+stemwords_func <- function(x){
+  require(textstem)
+  stem_strings(x )
+  
+}
+
+```
+
+
+
+### func using search
+
+#### tidy func
+```{r} 
+tidy_prepsearchfunc <- function(dflist) {
+    # store docs in Corpus class which is a fundamental data structure in text mining
+
+  my.docs <- VectorSource(c(dflist))
+  
+  actual_punc_rem <- function(x) {
+    removePunctuation(x,ucp = TRUE)
+    
+  }
+  # Transform/standaridze docs to get ready for analysis
+  my.corpus <- VCorpus(my.docs) #%>% 
+               # tm_map(stemDocument) %>%
+            #   tm_map(removeNumbers) %>% 
+              # tm_map(actual_punc_rem) %>% 
+              # tm_map(content_transformer(tolower)) %>% 
+               #tm_map(removeWords,stopwords("en")) %>%
+             #  tm_map(stripWhitespace) #%>%
+        # tm_map(stemDocument)
+  
+  term.doc.matrix <- tidy(my.corpus)
+  # Store docs into a term document matrix where rows=terms and cols=docs
+  # Normalize term counts by applying TDiDF weightings
+  term.doc.matrix.stm <- TermDocumentMatrix(
+    my.corpus,
+    control=list(
+      weighting=function(x) weightSMART(x,spec="ltc"),
+      wordLengths=c(3,Inf))
+    )
+
+
+
+  # Transform term document matrix into a dataframe
+  term.doc.matrix <- tidy(term.doc.matrix.stm) %>%
+                     group_by(document) %>%
+                     mutate(vtrLen=sqrt(sum(count^2))) %>%
+                     mutate(count=count/vtrLen) %>%
+                     ungroup() %>%
+                     select(term:count)
+
+ return(term.doc.matrix)
+}
+# 
+# docList <- as.list(books$sentence)
+# N.docs <- length(docList)
+
+# tidied_docs <- tidyquery(docList)
+# tidied_docs <- tidied_docs %>% 
+#                mutate(document=as.numeric(document))
+# 
+# 
+# tidied_docs%>% 
+#   feather::write_feather(
+#     
+#     "/home/jaina/Documents/work/2021 ML/build app/save 210615/words.feather"
+#   )
+
+```
+
+#### goog search
+```{r }
+
+find_matchname_googsearch <- function(
+    #ref database
+    # temp_databaselu_func,
+         #col of ref database 
+
+        colname_base ,
+    #to match df
+    # temp_without_lu_func , 
+    #col of to match df
+    colname_to_match, 
+        df_send = NULL,
+    df_send_want = NULL,
+
+     extract_n_top = 20
+    # year_func#@,
+    # remove_self_reference = "No",
+    # keep_states = "No", 
+   # if_id_col = NULL
+    ){
+  require(tm)
+    require(tm)
+require(tidytext)
+require(dplyr)
+require(tm)
+require(SnowballC)
+
+#   require(tidytext)
+# require(reshape2)
+#   require(tm)
+#   require(stringdist)
+#   require(reshape2)
+
+  
+
+  # ### DELETE TESTING
+  # temp_databaselu_func <- proposed_states_LU_long
+  # temp_without_lu_func <- combined_exceptions_fips_states
+  # colname_to_match = combined_exceptions_fips_states$`Excepted OA`
+  
+  # colname_base =  compiled_varnames_df_currentyear$Description 
+  #   colname_to_match = vars_i_want_with_1969$variable  
+  #    extract_n_top = 100 
+  #   df_send_want = vars_i_want_with_1969
+  # df_send = NULL
+  # j_func <- 1
+  # filtervars <- "all"
+  colname_base <- colname_base[!is.na(colname_base)]
+  colname_to_match <- colname_to_match[!is.na(colname_to_match)]
+  ### 
+    # ### round 2
+    temp_databaselu_func=  tibble(
+      Description = colname_base
+    ) %>% 
+      mutate(
+        document = row_number()
+      )
+    #col of ref database
+
+        # colname_base =  temp_databaselu_func$Description
+    #to match df
+    # temp_without_lu_func= vars_i_want %>%
+    #   mutate(
+    #     variable =cleantext(variable)
+    #   ) %>%
+    #   group_by(
+    #     variable
+    #   )  %>%
+    #   slice(1) %>%
+    #   ungroup()
+  #   #col of to match df
+    # colname_to_match = temp_without_lu_func$variable
+  # remove_self_reference = "Yes"
+  # keep_states = "Yes"
+  # j_func <- 1
+  # 
+  # 
+    tidied_docs <- tidy_prepsearchfunc(
+      colname_base
+    )  %>%
+      mutate(document=as.numeric(document)) 
+    
+        
+    if(!is.null(df_send))
+    {
+      tidied_docs <- tidied_docs %>% 
+        left_join(
+          temp_databaselu_func, 
+          by = c("document")
+        )%>% 
+        left_join(
+          df_send, 
+          by = c("Description")
+        ) %>% 
+        select(
+          -Description
+        )
+    }
+
+  # filtervars <- "all"
+
+  
+  ### COMMENT OUT TESTING ABOVE 
+  j_func <- 1
+  rm(pairmatchlist)
+  pairmatchlist <- list()
+  while(j_func <= length(colname_to_match) )
+  {
+    
+    colname_to_match_current <- colname_to_match[j_func]
+
+        
+  queryTermlist <- data.frame(
+    search_term = str_squish(strsplit(colname_to_match_current, split = ",")[[1]])
+  ) %>% 
+    mutate(
+      index = row_number()
+    )
+  #  listtest <- c(tidied_docs, "farm",final_output_token)
+  #  docList_temp<- tidied_docs
+  #  queryTerm <- c("farmers market and local food")
+  # sentences <- final_output_token
+  # Record starting time to measure your search engine performance
+  # start.time <- Sys.time()
+  
+  # store docs in Corpus class which is a fundamental data structure in text mining
+  my.docs <- VectorSource(queryTermlist$search_term)
+  
+  
+  # Transform/standaridze docs to get ready for analysis
+  my.corpus <-    VCorpus(my.docs) #%>% 
+    # tm_map(stemDocument) %>%
+  #   tm_map(removeNumbers) %>% 
+  #   tm_map(content_transformer(tolower)) %>% 
+  #   tm_map(removeWords,stopwords("en")) %>%
+  #   tm_map(stripWhitespace)  %>%
+  # tm_map(stemDocument) 
+  
+  
+  # Store docs into a term document matrix where rows=terms and cols=docs
+  # Normalize term counts by applying TDiDF weightings
+  term.doc.matrix.stm <- TermDocumentMatrix(
+    my.corpus#,
+    # control=list(
+    #   weighting=function(x) weightSMART(x,spec="ltc"),
+    #   wordLengths=c(1,Inf))
+  )
+  
+  
+  
+  # Transform term document matrix into a dataframe
+  term.doc.matrix <- 
+    tidy(term.doc.matrix.stm) %>% 
+    group_by(document) %>% 
+    mutate(vtrLen=sqrt(sum(count^2))) %>% 
+    mutate(count=count/vtrLen) %>% 
+    ungroup() %>% 
+    select(term:count)
+  
+  
+  # numdocs_base <- max(docList_temp$document)
+  # docMatrix <- tidied_docs 
+  # docMatrix <- term.doc.matrix %>% 
+  #              mutate(document=as.numeric(document)) %>% 
+  #              filter(document<N.docs+1)
+  qryMatrix <- term.doc.matrix %>% 
+    mutate(document=as.numeric(document)) %>% 
+    left_join(
+      queryTermlist, 
+      by = c("document" = "index")
+    )# %>% 
+  # filter(document>=N.docs+1)
+  
+  
+  
+    if(!is.null(df_send))
+  {
+      searchRes <- tidied_docs %>% 
+        filter(
+          variable == colname_to_match_current
+        ) %>% 
+        select(
+          -variable 
+        ) %>% 
+    inner_join(
+      qryMatrix,# %>% 
+        # mutate(
+        #   term = as.character(term)
+        # ),
+      by=c("term"="term"),
+               suffix=c(".doc",".query")) %>% 
+    mutate(termScore=round(count.doc*count.query,4)) %>% 
+    group_by(document.query,document.doc, search_term) %>% 
+    summarise(hits=sum(termScore)) %>% 
+    # filter(row_number(desc(Score))<=10) %>% 
+    ungroup() %>% 
+    arrange(desc(hits)) %>% 
+    left_join(
+      temp_databaselu_func ,
+      by=c("document.doc"="document")
+    ) %>%
+    rename(
+      doc_num2 = document.doc,
+      variable = search_term, 
+      value = hits 
+    ) %>%
+    # mutate(
+    #   doc_num2 = docnum
+    # )
+    # ungroup() %>% 
+    # group_by(
+    #   
+    #   filename, document,division, title, section, longdoc_id
+    #   
+    # ) %>% 
+    # rename(Result=text) %>% 
+    select(
+      variable, Description, value
+    )  
+
+  }
+  # Calcualt
+  if(is.null(df_send))
+  {
+      searchRes <- tidied_docs %>% 
+    inner_join(qryMatrix,# %>% 
+        # mutate(
+        #   term = as.character(term)
+        # ),
+        by=c("term"="term"),
+               suffix=c(".doc",".query")) %>% 
+    mutate(termScore=round(count.doc*count.query,4)) %>% 
+    group_by(document.query,document.doc, search_term) %>% 
+    summarise(hits=sum(termScore)) %>% 
+    # filter(row_number(desc(Score))<=10) %>% 
+    ungroup() %>% 
+    arrange(desc(hits)) %>% 
+    left_join(
+      temp_databaselu_func ,
+      by=c("document.doc"="document")
+    ) %>%
+    rename(
+      doc_num2 = document.doc,
+      variable = search_term, 
+      value = hits 
+    ) %>%
+    # mutate(
+    #   doc_num2 = docnum
+    # )
+    # ungroup() %>% 
+    # group_by(
+    #   
+    #   filename, document,division, title, section, longdoc_id
+    #   
+    # ) %>% 
+    # rename(Result=text) %>% 
+    select(
+      variable, Description, value
+    )  
+
+  }
+  # Calcualte top ten results by cosine similarity
+  # select(Result,Score) %>% 
+  
+  
+
+
+ pairmatchlist[[j_func]] <- searchRes
+j_func <- j_func+1
+
+  }
+  
+df_out <- pairmatchlist %>%
+  bind_rows()%>% 
+  
+   group_by(
+    variable 
+  ) %>% 
+    slice_max(
+     value, n = extract_n_top
+    ) %>% 
+  ungroup()
+
+if(!is.null(df_send_want)  )
+{
+  df_out <- df_out %>% 
+    bind_rows(
+      df_send_want %>% 
+        filter(
+          nchar(previous_Descrip_match ) >=4
+        ) %>% 
+        rename(
+          Description = previous_Descrip_match
+        ) %>% 
+        # filter(
+        #   want == "x"
+        # ) %>% 
+        select(
+          Description, variable
+        )%>% 
+        mutate(
+          value =1
+        )
+    ) %>% 
+    group_by(
+      Description,variable
+    ) %>% 
+    arrange(
+      -value
+    ) %>% 
+    slice(1) %>% 
+    ungroup()
+   
+}
+
+df_out   %>% 
+  group_by(
+   variable
+  ) %>% 
+  arrange(
+    variable,-value 
+  ) %>% 
+  ungroup() 
+}
+
+
+```
+
+
+#### search widyr
+```{r }
+find_matchname_widyr <- function(
+    # temp_databaselu_func=proposed_states_LU_long,
+    # temp_without_lu_func=combined_exceptions_fips_states,
+    colname_to_match ,
+    colname_base, 
+    extract_n_top = 20
+    # remove_self_reference = "No"
+    ){
+  require(widyr)
+  # ### DELETE TESTING
+  # temp_databaselu_func <- proposed_states_LU_long
+  # temp_without_lu_func <- combined_exceptions_fips_states
+  # colname_to_match = combined_exceptions_fips_states$`Excepted OA`
+  # j_func <- 1
+  # filtervars <- "all"
+  
+  ### 
+    # ### round 2
+  # temp_databaselu_func <- company_names_list_state
+  # temp_without_lu_func <- company_names_list_state
+  # colname_base = company_names_list_state$Company_edit
+  # colname_to_match = company_names_list_state$Company_edit
+  # remove_self_reference = "Yes"
+  # keep_states = "Yes"
+  # j_func <- 1
+  # filtervars <- "all"
+
+  
+  ### COMMENT OUT TESTING ABOVE 
+  rm(j_func)
+  j_func <- 1
+  rm(pairmatchlist)
+  pairmatchlist <- list()
+  while(j_func <= length(colname_to_match))
+  {
+    extracted <- tibble(
+      names_to_match = colname_to_match[j_func] 
+    )  %>% 
+      mutate(application_id = "mystery") 
+    
+       
+     ##testing
+  # extracted <- temp_without_lu %>% filter(files_id == testname) %>% mutate(application_id_sub = "mystery") 
+  
+  # current_loop_grant = extracted$granttype[1]
+  # current_loop_state = extracted$state[1]
+  # current_loop_year = extracted$year[1]
+  
+    narrowstateyear = tibble(
+      names_to_match = colname_base
+    )  
+         
+    # if(remove_self_reference != "No")
+    # {
+    #   narrowstateyear <- narrowstateyear%>% 
+    #     filter(
+    #       names_to_match!= colname_to_match[j_func]
+    #     )
+    # }
+    # 
+ 
+  combined_df <- bind_rows(
+    extracted,
+    narrowstateyear, 
+    data.frame(
+      names_to_match = c("09009009 zzzzzzzzz ddddddddd","090090094 zzzzzzzzzz dddddddddd"),
+      application_id = c("09009009","090090094")
+    )
+  )%>% 
+    rowid_to_column("ID") 
+  
+  combined_df_tfidf <- combined_df %>%
+    unnest_tokens(word, names_to_match) %>% 
+    count(ID, word, sort = TRUE)%>% 
+    bind_tf_idf(ID, word, n)
+  
+  # if(combined_df$ID %>% unique() %>% length() >2) 
+  # {
+  pairwisesimlist <- 
+    ((combined_df_tfidf %>% 
+        widyr::pairwise_similarity(ID, word, tf_idf, sort = TRUE)) %>% 
+       filter(
+         item1==1)
+    )#[c(1:extract_n_top),]
+  
+  # }
+  # if(combined_df$ID %>% unique() %>% length() <=2) 
+  # {
+  # pairwisesimlist <- (combined_df_tfidf %>% 
+  # pairwise_similarity(ID, word, tf_idf, sort = TRUE))[1,]
+  # }
+  
+  pairmatch <- combined_df %>% 
+    filter(
+      application_id == "mystery"
+    ) %>% 
+    left_join(
+      pairwisesimlist, 
+      by = 
+        c("ID" = "item1")
+    ) %>% 
+    select(
+       #state, 
+       names_to_match,item2, similarity
+    ) %>% 
+    rename(
+      variable = names_to_match
+    ) %>% 
+    #rj with reference
+    left_join(
+      combined_df %>% 
+        # filter(
+        # 	agreementno_sub != "mystery"
+        # 	) %>%
+        rename(
+          Description = names_to_match
+        ) %>%
+        select(
+          ID, Description), 
+      by = c("item2" = "ID")
+    ) %>%
+    select(-item2) %>% 
+    rename(
+      value = similarity
+    ) %>% 
+    select(
+      variable, Description, value
+    ) %>% 
+    arrange(
+      -value
+    )
+  
+  # if(!is.null(if_id_col ))
+  #   {
+  #   pairmatch <-  pairmatch %>% 
+  # cbind(
+  #   data.frame(
+  #     id_query = if_id_col[j_func]
+  #   )
+  # )
+
+  
+  pairmatchlist[[j_func]]<- pairmatch # %>% 
+
+  j_func <- j_func+1
+  }
+pairmatchlist %>% 
+  
+  bind_rows() %>% 
+  group_by(
+    variable
+  ) %>% 
+    slice_max(
+     value, n = extract_n_top
+    ) %>% 
+  ungroup()
+} 
+
+
+
+
+```
+ 
+
+#### func using jw
+```{r }
+find_matchname_jw <- function(
+    #ref database
+    # temp_databaselu_func,
+         #col of ref database 
+
+        colname_base ,
+    #to match df
+    # temp_without_lu_func , 
+    #col of to match df
+    colname_to_match , 
+    df_send = NULL,
+    df_send_want = NULL,
+    extract_n_top = 20#@,
+    # remove_self_reference = "No",
+    # keep_states = "No", 
+   # if_id_col = NULL
+    ){
+  require(widyr)
+  require(tidytext)
+require(reshape2)
+  require(tm)
+  require(stringdist)
+  require(reshape2)
+
+  # ### DELETE TESTING
+  # temp_databaselu_func <- proposed_states_LU_long
+  # temp_without_lu_func <- combined_exceptions_fips_states
+  # colname_to_match = combined_exceptions_fips_states$`Excepted OA`
+  # j_func <- 1
+  # filtervars <- "all"
+  
+  ### 
+    # ### round 2
+  #   temp_databaselu_func=  compiled_varnames_df %>% 
+  #     filter(
+  #       year == 2012
+  #     )%>% 
+  #     mutate(
+  #       Description =cleantext(Description)
+  #     ) %>% 
+  #     group_by(
+  #       Description
+  #     ) %>% 
+  #     slice(1) %>% 
+  #     ungroup() 
+  #        #col of ref database 
+  # 
+  #       colname_base =  temp_databaselu_func$Description
+  #   #to match df
+  #   temp_without_lu_func= vars_i_want %>% 
+  #     mutate(
+  #       variable =cleantext(variable)
+  #     ) %>% 
+  #     group_by(
+  #       variable 
+  #     )  %>% 
+  #     slice(1) %>% 
+  #     ungroup() 
+  #   #col of to match df
+  #   colname_to_match = temp_without_lu_func$variable
+  # remove_self_reference = "Yes"
+  # keep_states = "Yes"
+  # j_func <- 1
+  # 
+  # 
+
+  # filtervars <- "all"
+  colname_base <- colname_base[!is.na(colname_base)]
+  colname_to_match <- colname_to_match[!is.na(colname_to_match)]
+
+  
+  ### COMMENT OUT TESTING ABOVE 
+  rm(j_func)
+  j_func <- 1
+  rm(pairmatchlist)
+  pairmatchlist <- list()
+  while(j_func <= length(colname_to_match)
+  )
+  {
+    
+    colname_to_match_current <- colname_to_match[j_func]
+    if(!is.null(df_send))
+    {
+      colname_base_current <- (df_send %>% 
+        filter(
+          variable ==colname_to_match_current
+        ))$Description %>% 
+        unique()
+    }
+        if(is.null(df_send))
+    {
+      colname_base_current <-  colname_base
+    }
+
+    # temp_without_lu_func_current <- temp_without_lu_func %>% 
+    #   filter(
+    #     variable == colname_to_match_current
+    #   )
+      start_time <- Sys.time()
+mat <- stringdistmatrix(
+  #colname to match comes from temp_without_lu_func
+ colname_to_match_current,
+   #colname_base comes from temp_databaselu_func
+  colname_base_current,
+ method = "jw",
+ # usenames = "strings"
+  # method = "jw"
+ )
+end_time <- Sys.time()
+# 
+# mat[mat==0] <- NA # ignore self
+# mat[mat>4] <- NA  # cut level
+# amatch <- rowSums(mat, na.rm = TRUE)>0 # ignore no match
+ # temp_databaselu_func$Description[amatch] <- temp_without_lu_func$variable[apply(mat[amatch,],1,which.min)]
+
+d <- unique(melt(mat))
+# out <- subset(d, value > 0 & value < 5)
+
+# d%>% 
+#   group_by(
+#    Var2
+#   ) %>% 
+#   arrange(
+#     -value,Var2
+#   ) %>% ungroup()
+d_joined <- d %>% 
+  left_join(
+    tibble(
+      variable = colname_to_match_current
+    )  %>% 
+      mutate(
+        rowid = row_number()
+      ) %>% 
+      select(
+        rowid, variable
+      ),
+    by = c("Var1" = "rowid")
+  )%>% 
+  left_join(
+    tibble(
+      Description = colname_base_current
+    )  %>% 
+      mutate(
+        rowid = row_number()
+      ) ,
+    by = c("Var2" = "rowid")
+  )%>% 
+  # group_by(
+  #   Var1
+  # ) %>% 
+  # slice_min(
+  #   value, n = extract_n_top
+  # ) %>% 
+  # ungroup() %>% 
+  select(
+    variable, Description, value
+  )
+pairmatchlist[[j_func]] <- d_joined
+j_func <- j_func+1
+  }
+df_out <- pairmatchlist %>%
+  bind_rows()%>% 
+  
+   group_by(
+    variable
+  ) %>% 
+    slice_min(
+     value, n = extract_n_top
+    ) %>% 
+  ungroup()
+
+
+if(!is.null(df_send_want)  )
+{
+  df_out <- df_out %>% 
+    bind_rows(
+      df_send_want %>% 
+        filter(
+          nchar(previous_Descrip_match ) >=4
+        ) %>% 
+        rename(
+          Description = previous_Descrip_match
+        ) %>% 
+        # filter(
+        #   want == "x"
+        # ) %>% 
+        select(
+          Description, variable
+        )%>% 
+        mutate(
+          value =.001
+        )
+    ) %>% 
+    group_by(
+      Description,variable
+    ) %>% 
+    arrange(
+      value
+    )%>% 
+    slice(1) %>% 
+    ungroup()
+   
+}
+df_out  %>% 
+  group_by(
+   variable
+  ) %>% 
+  arrange(
+    variable,value 
+  ) %>% 
+  ungroup() 
+
+}
+
+
+```
+
+# Import aligned var names
+
+## cleantext varname
+```{r }
+cleantextvarname <- function(z){
+   gsub(
+      "; NOT SPECIFIED", "", z, perl = TRUE,ignore.case = TRUE
+    )
+  
+}
+
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+```
+## alignedvars 23-11-25
+```{r }
+nassvarname_aligncat  <- 
+  readxl::read_excel(
+    "//jna_nol/asus/msi/work/NASS 1992 and before/var_names_after_1978/231123_varnames_align_categories.xlsx"
+  )
+
+nassvarname_align <- readxl::read_excel(
+  "//jna_nol/asus/msi/work/NASS 1992 and before/var_names_after_1978/231123_varnames_align.xlsx", 
+  sheet = "Sheet1"
+) %>% 
+  mutate(
+    # Description =cleantextvarname(
+    #   Description
+    #  ), 
+    Varmatch_edit2 = cleantextvarname(
+      Varmatch
+    ) , 
+    rownum = row_number()
+    ) %>% 
+  group_by(rownum) %>% 
+  mutate(
+    # Description_year = 
+    correct_year = 
+            unlist(
+              qdapRegex::ex_default(
+               Description, pattern = paste(
+                 function_retrieve_data_rm$year,
+                 collapse = "|"
+                 )
+                ) 
+              # mgsub::mgsub(
+              #   string = Description, 
+              #   pattern = c(function_retrieve_data_rm$rmyear  ), 
+              #   replacement = c(function_retrieve_data_rm$year )
+
+            ) %>% paste(.,collapse = ",")
+      # case_when(
+      #   grepl(
+      #     x = Description,
+      #     pattern =paste(function_retrieve_data_rm$year, collapse = "|"), 
+      #     perl = TRUE, 
+      #     ignore.case = TRUE
+      #     ) ~ correct_year, 
+      #   TRUE ~ as.character(year), 
+      # )
+    ) %>% 
+  ungroup() %>% 
+  tidytext::unnest_tokens(
+    output = correct_year, input = correct_year,  token = 'regex', pattern=","
+  ) %>% 
+  group_by(
+    correct_year, Description, Varmatch_edit2
+  ) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  mutate(
+    correct_year2 = 
+      as.numeric(correct_year), 
+    correct_year3 =
+      coalesce(correct_year2, year)
+  )
+   
+nassvarname_align %>% 
+  select(Varmatch) %>% 
+  distinct() %>% 
+  writexl::write_xlsx(
+    "//jna_nol/asus/msi/work/NASS 1992 and before/var_names_after_1978/231123_varnames_align_categories.xlsx"
+  )
+```
+
+### function to grab vars from each year 
+
+```{R }
+function_retrieve_data_funcinside <- function(x, function_retrieve_outfilename = "231127_out_", function_retrieve_data_nassvarname_align = nassvarname_align){
+  require(feather)
+  require(mgsub)
+  # x <- function_retrieve_df$filepaths[1]
+  # function_retrieve_data_nassvarname_align = nassvarname_align
+  # function_retrieve_outfilename = "231127_out_"
+  function_retrieve_data_funcinside_x <- feather::read_feather(
+    x
+  ) %>% 
+    mutate(
+      val2 = readr::parse_number(as.character(value), locale = readr::locale(decimal_mark = "."))
+    ) %>% 
+    filter(
+      !is.na(val2)
+    )
+  
+  function_retrieve_likelycurrentyear <- Mode(function_retrieve_data_funcinside_x$year)
+
+  # function_retrieve_data_funcinside_x %>% 
+  # filter(
+  #   grepl("expense",Description ,  perl = TRUE, ignore.case = TRUE)
+  # )%>% 
+  # View()
+  if(!( grepl("20231005", x, perl = TRUE)) )
+  {
+    function_retrieve_data_funcinside_x_lu <- function_retrieve_data_funcinside_x %>% 
+    group_by(
+      Description
+    ) %>%
+    slice(1) %>% 
+    ungroup() %>% 
+    mutate(
+      likely_year = function_retrieve_likelycurrentyear,
+      Description2 = cleantextvarname(Description), 
+      rownum = row_number(),
+      # correct_year3 = 
+    ) %>% 
+  group_by(rownum) %>% 
+  mutate(
+    # Description_year = 
+    correct_year = 
+            unlist(
+              qdapRegex::ex_default(
+               Description, pattern = paste(
+                 function_retrieve_data_rm$year,
+                 collapse = "|"
+                 )
+                ) 
+              # mgsub::mgsub(
+              #   string = Description, 
+              #   pattern = c(function_retrieve_data_rm$rmyear  ), 
+              #   replacement = c(function_retrieve_data_rm$year )
+
+            ) %>% paste(.,collapse = ",")
+      # case_when(
+      #   grepl(
+      #     x = Description,
+      #     pattern =paste(function_retrieve_data_rm$year, collapse = "|"), 
+      #     perl = TRUE, 
+      #     ignore.case = TRUE
+      #     ) ~ correct_year, 
+      #   TRUE ~ as.character(year), 
+      # )
+    ) %>% 
+  ungroup() %>% 
+  tidytext::unnest_tokens(
+    output = correct_year, input = correct_year,  token = 'regex', pattern=","
+  ) %>% 
+  group_by(
+    correct_year, Description 
+  ) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  mutate(
+    correct_year2 = 
+      as.numeric(correct_year), 
+    correct_year3 =
+      coalesce(correct_year2, likely_year, year)
+  )%>% 
+        select(
+          Description, Description2, correct_year3
+        ) %>% 
+        distinct()
+  
+     function_retrieve_data_funcinside_x_filter_pre <- function_retrieve_data_funcinside_x %>% 
+    left_join(
+      function_retrieve_data_funcinside_x_lu, 
+      by = c("Description")
+    ) 
+    
+  }
+  
+  if( ( grepl("20231005", x, perl = TRUE)) ){
+    
+    function_retrieve_data_funcinside_x_lu <- function_retrieve_data_funcinside_x %>% 
+    mutate(
+      likely_year = year,
+      Description2 = cleantextvarname(Description), 
+      rownum = row_number(),
+      # correct_year3 = 
+    ) %>% 
+  # group_by(rownum) %>% 
+  mutate(
+    # Description_year = 
+    correct_year = year
+  ) %>% 
+  #           unlist(
+  #             qdapRegex::ex_default(
+  #              Description, pattern = paste(
+  #                function_retrieve_data_rm$year,
+  #                collapse = "|"
+  #                )
+  #               ) 
+  #             # mgsub::mgsub(
+  #             #   string = Description, 
+  #             #   pattern = c(function_retrieve_data_rm$rmyear  ), 
+  #             #   replacement = c(function_retrieve_data_rm$year )
+  # 
+  #           ) %>% paste(.,collapse = ",")
+  #     # case_when(
+  #     #   grepl(
+  #     #     x = Description,
+  #     #     pattern =paste(function_retrieve_data_rm$year, collapse = "|"), 
+  #     #     perl = TRUE, 
+  #     #     ignore.case = TRUE
+  #     #     ) ~ correct_year, 
+  #     #   TRUE ~ as.character(year), 
+  #     # )
+  #   ) %>% 
+  # ungroup() %>% 
+  # tidytext::unnest_tokens(
+  #   output = correct_year, input = correct_year,  token = 'regex', pattern=","
+  # ) %>% 
+  group_by(
+     Description
+  ) %>%
+  slice(1) %>% 
+  ungroup() #%>% 
+  # mutate(
+  #   correct_year2 = 
+  #     as.numeric(correct_year)#, 
+  # #   correct_year3 =
+  # #     coalesce(correct_year2, likely_year, year)
+  # # )%>% 
+  # #       select(
+  # #         Description, Description2, correct_year3
+  # #       ) %>% 
+  # #       distinct()
+  # )
+     function_retrieve_data_funcinside_x_filter_pre <- function_retrieve_data_funcinside_x %>% 
+    left_join(
+      function_retrieve_data_funcinside_x_lu %>% 
+        select(
+          Description, Description2
+        ) %>% 
+        distinct(), 
+      by = c("Description")
+    )  %>% 
+       mutate(
+         correct_year3 = year
+       )
+     
+  }
+  
+  function_retrieve_data_funcinside_filename <- paste0(
+    gsub(
+      ".*/", "", x, perl = TRUE
+    )
+  )
+
+ function_retrieve_data_nassvarname_align <- nassvarname_align %>%
+        select(
+          Description,  Varmatch_edit2, correct_year3
+        ) %>%
+        distinct() %>%
+        bind_rows(
+          nassvarname_align %>%
+            select(
+              Varmatch_edit2, correct_year3
+            ) %>%
+            distinct() %>%
+            mutate(
+              Description = Varmatch_edit2
+            )
+        ) %>%
+        distinct()
+ #  
+ # if( grepl("qs", function_retrieve_data_funcinside_filename, perl = TRUE ))
+ # {
+ #   function_retrieve_data_nassvarname_align <- nassvarname_align %>% 
+ #        select(
+ #          Description,  Varmatch_edit2, correct_year3
+ #        ) %>% 
+ #        distinct() %>% 
+ #        bind_rows(
+ #          nassvarname_align %>% 
+ #            select(
+ #              Varmatch_edit2, correct_year3
+ #            ) %>% 
+ #            distinct() %>% 
+ #            mutate(
+ #              Description = Varmatch_edit2
+ #            )
+ #        ) %>% 
+ #        distinct()
+ # }
+ # 
+  function_retrieve_data_funcinside_x_filter <- function_retrieve_data_funcinside_x_filter_pre %>% 
+    inner_join(
+      function_retrieve_data_nassvarname_align %>% 
+        select(
+          Description, Varmatch_edit2
+        ) %>% 
+        distinct(), 
+      by = c("Description2" =  "Description")
+      # Description %in% c(
+      #   nassvarname_align$Description
+      # )
+    ) %>% 
+    mutate(
+      GEOID = 
+        
+        str_pad(
+          string =gsub("NA", "", fips, perl = TRUE, ignore.case= TRUE), 
+          width = "5", 
+          side = "left", 
+          pad = "0"
+          ),
+    nchar_GEOID = nchar(as.numeric(GEOID)), 
+    
+     countygeoid =substrRight(GEOID,3)
+    )
+  
+  if(!("AGG_LEVEL_DESC" %in% c(function_retrieve_data_funcinside_x_filter %>% names()))){
+    function_retrieve_data_funcinside_x_filter <- 
+      function_retrieve_data_funcinside_x_filter %>% 
+      mutate(
+      GEO_TYPE= case_when(
+         GEOID == "00000" ~ "NATIONAL"  , 
+        countygeoid =="000"~ "STATE", 
+        TRUE ~"COUNTY"
+       )
+    
+      )
+    
+  }
+  # function_retrieve_data_funcinside_x_filter_out_pre_out %>% 
+  #   filter(
+  #     name == "UNITED STATEs"
+  #   ) |> 
+  #   View()
+  
+  if("AGG_LEVEL_DESC" %in% c(function_retrieve_data_funcinside_x_filter %>% names()))
+  {
+    function_retrieve_data_funcinside_x_filter <- 
+      function_retrieve_data_funcinside_x_filter %>% 
+      mutate(
+        # name = LOCATION_DESC,
+        colname_orig = Description
+      ) %>% 
+      mutate(
+        GEO_TYPE = AGG_LEVEL_DESC
+          # case_when(
+          #   AGG_LEVEL_DESC  == "NATIONAL" ~ "UNITED STATES", 
+          #   TRUE ~ LOCATION_DESC
+          # )
+      ) 
+    
+  }
+   #   if(!("LOCATION_DESC" %in% c(function_retrieve_data_funcinside_x_filter %>% names())) & (AGG_LEVEL_DESC%in% c(function_retrieve_data_funcinside_x_filter %>% names()) ))
+  # {
+  #   function_retrieve_data_funcinside_x_filter <- 
+  #     function_retrieve_data_funcinside_x_filter %>% 
+  #     rename(
+  #       # name = LOCATION_DESC,
+  #       colname_orig = Description
+  #     ) %>% 
+  #     mutate(
+  #       name = 
+  #         case_when(
+  #           AGG_LEVEL_DESC  == "NATIONAL" ~ "UNITED STATES", 
+  #           TRUE ~ STATE_NAME
+  #         )
+  #     ) 
+  #   
+  # }
+ function_retrieve_data_funcinside_x_filter_out <- function_retrieve_data_funcinside_x_filter%>% 
+   # filter(
+   #   !is.na(value)
+   # ) %>% 
+   # rename(
+   #   valu
+   # )
+      select(
+        fips,
+        # Description,Description2, year,correct_year3, GEO_TYPE, GEOID, Varmatch_edit2, val2,
+        everything(), -value
+      )%>% 
+   rename(
+     value = val2
+   ) %>% 
+  group_by(
+   GEO_TYPE,  GEOID, Varmatch_edit2, correct_year3 , value
+  ) %>%
+   summarise(
+     val_occurrence = n()
+   ) %>% 
+   ungroup() %>% 
+   rename(
+     Description = Varmatch_edit2, 
+     year = correct_year3
+   )%>% 
+  mutate(
+    source = function_retrieve_data_funcinside_filename
+  )
+  # slice(1) %>% 
+  # ungroup()
+ 
+function_retrieve_data_missing <- nassvarname_align %>% 
+        select(
+          Varmatch_edit2
+        ) %>% 
+        distinct() %>% 
+  anti_join(
+    function_retrieve_data_funcinside_x_filter_out, 
+    by = c("Varmatch_edit2"= "Description")
+  ) %>% 
+  rename(
+    Missing_var = Varmatch_edit2
+  ) %>% 
+  mutate(
+    current_year = function_retrieve_likelycurrentyear 
+  )%>% 
+  mutate(
+    source = function_retrieve_data_funcinside_filename
+  )
+# function_retrieve_data_funcinside_x_filter_out %>% 
+#   filter(
+#     grepl("expense",Description ,  perl = TRUE, ignore.case = TRUE)
+#   )%>% 
+#   View()
+# function_retrieve_data_funcinside_x_filter_out_pre %>% 
+#   group_by()
+
+
+function_retrieve_data_funcinside_x_filter_out_pre <-  function_retrieve_data_funcinside_x_filter%>% 
+  group_by(
+    GEO_TYPE,  GEOID, Varmatch_edit2, correct_year3
+  ) %>% 
+  mutate(
+     value_spread = sd(value, na.rm = TRUE)
+  ) %>% 
+  ungroup() %>% 
+      group_by(
+      Varmatch_edit2, correct_year3,Description
+      )  %>%
+  summarise(
+    max_value_spread = max(value_spread )
+  ) %>% 
+  # ungroup()
+  # distinct() %>%
+  ungroup() %>%
+  group_by(
+    Varmatch_edit2, correct_year3
+  ) %>% 
+  mutate(
+    Description_distinct = length(unique(Description))
+  ) %>% 
+  ungroup() %>% 
+  filter(
+    Description_distinct >=2, 
+    max_value_spread != 0
+  )%>% 
+  mutate(
+    source = function_retrieve_data_funcinside_filename
+  )
+#   mutate(
+#     Description_ntimes = n()
+#   ) %>%
+#   ungroup() %>%
+#   group_by(
+#         GEO_TYPE,  GEOID, Varmatch_edit2, correct_year3, name,value
+#       )  %>% 
+#   mutate(
+#     value_ntimes = n()
+#   ) %>%
+#   ungroup()%>%
+#       group_by(
+#         GEO_TYPE,  GEOID, Varmatch_edit2, correct_year3, name
+#       ) %>% 
+#       summarise(
+#         
+#         value_spread = sd(value, na.rm = TRUE), 
+#         var_mix = paste(
+#           paste0(Description," (", Description_ntimes,")") %>% unique(), collapse = "; "
+#         ) , 
+#         values= paste(
+#            paste0(value," (", value_ntimes,")") %>% unique(), collapse = "; "
+#         ), 
+#         num_values =  value %>% unique() %>% length()
+#       ) %>% 
+#   ungroup() %>% 
+#       filter(
+#         !is.na(value_spread)
+#       )
+# 
+# function_retrieve_data_funcinside_x_filter_out_pre_out <- function_retrieve_data_funcinside_x_filter_out_pre%>% 
+#   filter(
+#     num_values >=2
+#   ) %>% 
+#   group_by(Description, Description2,Varmatch_edit2 ) %>% 
+#   summarise(
+#     numcounties = length(unique(GEOID)),
+#     maxmatches = max(num_values, na.rm = TRUE),
+#     maxsd = max(value_spread, na.rm = TRUE )
+#   ) %>% 
+#   ungroup() %>% 
+#   arrange(
+#     -numcounties
+#   ) %>% 
+#   select(
+#     Varmatch_edit2, everything()
+#   )
+# 
+# d%>% 
+#       mutate(
+#         valmix = paste0( round(value_spread, 1), ": ", var_mix )
+#       ) %>% 
+#       ungroup() %>% 
+#       arrange(
+#         -value_spread
+#       )  %>% 
+#       group_by(
+#         GEO_TYPE,  Varmatch_edit2, correct_year3
+#       ) %>% 
+#       slice(
+#         1:10
+#       ) %>% 
+#       summarise(
+#         valmix = paste(
+#           valmix , collapse = "; "
+#         )
+#       ) %>% 
+#       ungroup()  
+
+# function_retrieve_data_funcinside_x_filter_out_doublecheckvar <-function_retrieve_data_missing %>% 
+#   bind_rows(
+#     d
+#       # spread(
+#       #   key = correct_year3, 
+#       #   value = valmix
+#       # )
+#   )%>% 
+#   mutate(
+#     source = function_retrieve_data_funcinside_filename
+#   ) %>% 
+#   select(
+#  source,   Missing_var,everything()
+#   )
+  # select(
+  #     fips, colname_orig, Description,Description2, year,correct_year3, GEO_TYPE, GEOID, Varmatch_edit2, value
+  # )
+function_retrieve_data_funcinside_x_filter_out_pre%>% 
+  writexl::write_xlsx(
+    paste0(
+      "//jna_nol/asus/msi/work/NASS 1992 and before/select data/post 1978 livestock gen/" , 
+      function_retrieve_outfilename,
+      "doublecheck_varname_",
+    gsub("feather", "xlsx",
+      function_retrieve_data_funcinside_filename, perl = TRUE, ignore.case = TRUE
+    )
+  )
+  )
+
+function_retrieve_data_missing%>% 
+  writexl::write_xlsx(
+    paste0(
+      "//jna_nol/asus/msi/work/NASS 1992 and before/select data/post 1978 livestock gen/" , 
+      "missing_vars_",
+            function_retrieve_outfilename,
+
+    gsub("feather", "xlsx",
+      function_retrieve_data_funcinside_filename, perl = TRUE, ignore.case = TRUE
+    )
+  )
+  )
+function_retrieve_data_funcinside_x_filter_out %>% 
+  feather::write_feather(
+    paste0(
+      "//jna_nol/asus/msi/work/NASS 1992 and before/select data/post 1978 livestock gen/" , 
+      "selectvar_dataset_",
+            function_retrieve_outfilename,
+
+    function_retrieve_data_funcinside_filename
+  )
+  )
+
+
+  function_retrieve_data_funcinside_x_filter_out
+}
+```
+
+### actual function
+```{R }
+function_retrieve_data <- function(funcret_filelist, funcret_folder, funcret_alignvardf,funcret_folderoutname   , funcret_fileoutname = "outnameall"){
+  funcret_folderoutname ="//jna_nol/asus/msi/work/NASS 1992 and before/select data/post 1978 livestock gen/" 
+  funcret_fileoutname = "231127_selectdata_combined_out"
+  funcret_alignvardf = 
+  funcret_filelist = c(1978,1982, 1987, 1992, 1997, 2002, 2007, 2012, 2017, "animals_products")
+    funcret_filelist = c(1978,1982, 1987, 1992 )
+  funcret_filelist = c(  "animals_products")
+    funcret_filelist = c(2017 )
+
+  function_retrieve_data_rm <- tibble(
+    year = c(1950:2023), 
+    # rmyear = paste0(   ".*, ", year , ".*")
+   rmyear = paste0(   ".*", year , ".*")
+
+  )
+  
+  funcret_filelist_paste = paste(
+    funcret_filelist, collapse = "|"
+  )
+  funcret_folder = "//jna_nol/asus/msi/work/NASS 1992 and before/output"
+   require(parallel)
+  require(furrr)
+  require(tidyverse)
+  require(tidytext)
+require(callr)
+  require(pdftools)
+  options(future.globals.maxSize= 891289600)
+require(tesseract)
+require(future.callr)
+    require(feather)
+  require(mgsub)
+
+  # cl <- makePSOCKcluster(detectCores() - 2)
+
+plan("callr", workers =90)
+
+function_retrieve_df <- tibble(
+  filepaths = list.files(
+  path = funcret_folder, 
+  pattern = funcret_filelist_paste, recursive = FALSE, full.names = TRUE)
+  )%>% 
+  filter(
+    !grepl("~",filepaths ), 
+    grepl("feather", filepaths)
+  ) %>% 
+  mutate(
+    GEOID = furrr::future_map(
+      filepaths,
+      ~function_retrieve_data_funcinside(.x)
+                       
+  )
+  )%>% 
+  unnest()  
+
+# function_retrieve_checknames_df <- tibble(
+#   filepaths = list.files(
+#   path = "//jna_nol/asus/msi/work/NASS 1992 and before/select data/post 1978 livestock gen", 
+#   pattern = "doublecheck_varname", recursive = FALSE, full.names = TRUE)
+#   )%>% 
+#   filter(
+#     !grepl("~",filepaths )
+#   ) %>% 
+#   mutate(
+#     GEOID = furrr::future_map(
+#       filepaths,
+#       ~readxl::read_excel(.x)
+#                        
+#   )
+#   ) %>% 
+#   unnest()
+
+function_retrieve_selectdata <- tibble(
+  filepaths = list.files(
+  path =  "//jna_nol/asus/msi/work/NASS 1992 and before/select data/post 1978 livestock gen", 
+  pattern = "selectvar_dataset", recursive = FALSE, full.names = TRUE)
+  )%>% 
+  filter(
+    !grepl("~",filepaths ), 
+    grepl("feather", filepaths)
+  ) %>% 
+  mutate(
+    GEOID = furrr::future_map(
+      filepaths,
+      ~feather::read_feather(.x)
+                       
+  )
+  )%>% 
+  unnest()  
+
+function_retrieve_selectdata.slice <- function_retrieve_selectdata %>% 
+  group_by(
+    GEOID, GEO_TYPE, Description, year, value
+  ) |> 
+  mutate(
+    total_number = sum(value,na.rm=TRUE)
+  )|> 
+  ungroup() %>% 
+  group_by(
+    GEOID, GEO_TYPE, Description, year 
+  ) |>
+  arrange(
+    -total_number
+  ) %>% 
+  slice(1) |> 
+  ungroup()
+
+function_retrieve_selectdata.slice %>% 
+  feather::write_feather(
+    paste0(
+     funcret_folderoutname, "/", funcret_fileoutname ,".feather"
+    )
+    
+  )
+# 
+# nass2022 <- tibble(
+#   filepaths = list.files(
+#   path = "//jna_nol/asus/msi/work/NASS 1992 and before/new nass", 
+#   pattern = "animals_products", recursive = FALSE, full.names = TRUE)
+#   )%>% 
+#   filter(
+#     !grepl("~",filepaths )
+#   ) %>% 
+#   mutate(
+#     GEOID = furrr::future_map(
+#       filepaths,
+#       ~function_retrieve_data_funcinside(.x)
+#                        
+#   )
+#   ) %>% 
+#   unnest()
+}
+
+```
+
+## graph aggregate data
+```{r }
+nass_select78_17 <- feather::read_feather(
+  "//jna_nol/asus/msi/work/NASS 1992 and before/select data/post 1978 livestock gen/231127_selectdata_combined_out.feather"
+)
+
+concen_hist <- readxl::read_excel(
+  "//jna_nol/asus/msi/work/farmer welfare/PSD/FI Data/231123 packer concentration ntl.xlsx"
+) %>% 
+  gather(
+    key = Description,
+    value = value,
+    Steers_Heifers:Turkey
+  ) %>% 
+  filter(
+    !is.na(value)
+  ) %>% 
+  mutate(
+    GEO_TYPE = "NATIONAL"
+  )
+
+```
+
+### addunits func
+```{r }
+addUnits <- function(n) {
+  labels <- ifelse(abs(n) < 1000, n,  # less than thousands
+                   ifelse(abs(n) < 1e6, paste0(round(n/1e3), 'k'),  # in thousands
+                          ifelse(abs(n) < 1e9, paste0(round(n/1e6), 'M'),  # in millions
+                                 ifelse(abs(n) < 1e12, paste0(round(n/1e9), 'B'), # in billions
+                                        ifelse(abs(n) < 1e15, paste0(round(n/1e12), 'T'), # in trillions
+                                               'too big!'
+                                        )))))
+  return(labels)
+}
+
+
+```
+
+### graphing func
+
+
+```{r }
+graphnass_aggfunc <- function(graphnass_df, graphnass_folderout, graphnass_fileout){
+  graphnass_df= nass_select78_17  
+  graphnass_fileout =
+    "231127_agg.pdf"
+  graphnass_folderout="//jna_nol/asus/msi/work/NASS 1992 and before/r/images/aggregate stats"
+  graphnass_df_bind <- graphnass_df %>% 
+    bind_rows(
+      concen_hist %>% 
+        rename(
+          year = Year
+        ) %>% 
+        mutate(
+          # Description = "Concentration"#, 
+          Description = paste0( "Concentration", " - ",Description )
+        )
+    ) %>% 
+    filter(
+      GEO_TYPE %in% c(
+        "NATIONAL",
+        "STATE", 
+        "COUNTY"
+      )
+    ) |>
+    group_by(
+      year, GEO_TYPE, Description 
+    ) |> 
+    summarise(
+      value = sum(value, na.rm = TRUE)
+      )|>
+    ungroup() |>
+    group_by(
+      year, Description 
+    ) |> 
+    summarise(
+      value = median(value, na.rm = TRUE)
+      )|> 
+    ungroup() |>
+    mutate(
+      popup = paste0(
+        year, ": ",  addUnits(round(value, 2))  
+      ) 
+    ) 
+# graphnass_df_bind_race <- graphnass_df_bind %>% 
+#   filter(
+#     grepl("black|hispanic|asian|indian", Description, ignore.case = TRUE, perl = TRUE), 
+#     !grepl("Black & Other|Black and other|Black/oth races", Description, ignore.case = TRUE, perl = TRUE)
+#   ) 
+# graphnass_df_bind_race_LU <- graphnass_df_bind_race %>% 
+#   group_by(
+#     Description
+#   ) %>% 
+#   slice(1)%>% 
+#   ungroup() %>% 
+#   mutate(
+#     unit = gsub(".* - ", "", Description), 
+#     race = ""
+#   )
+# graphnass_df_bind_race_edit <-graphnass_df_bind_race  %>% 
+#     mutate(
+#        Description = 
+#         gsub(".*BLACK.*|.*SPANISH.*|")
+#     )
+#     
+graphnass_orderLU <- nassvarname_align %>% 
+  left_join(
+    nassvarname_aligncat %>% 
+      filter(
+        !is.na(order)
+      ) %>% 
+      mutate(
+        rightside = gsub(".*\\(", "", Varmatch, perl = TRUE), 
+        leftside = gsub("\\(.*", "", Varmatch, perl = TRUE)
+      ), 
+    by = c("Varmatch_edit2"= "Varmatch")
+  )
+
+ graphnass_out <-  graphnass_df_bind  %>% 
+   left_join(
+     graphnass_orderLU %>% 
+       select(
+         Varmatch_edit2, leftside, rightside, order
+       ) %>% 
+       distinct() %>% 
+       ungroup(), 
+     by = c("Description" = "Varmatch_edit2")
+   ) %>% 
+  mutate(
+    # numvals = qdapRegex::ex_number(
+    #   text.var = Varmatch_edit2, 
+    #  
+    # )%>% unlist()%>% paste(collapse = "]" ),
+    category = 
+      case_when(
+        grepl("cattle|steer",  Description, perl = TRUE, ignore.case = TRUE) ~ "Cattle",
+        grepl("chicken|broil",  Description, perl = TRUE, ignore.case = TRUE) ~ "Broilers",
+        grepl("hog",  Description, perl = TRUE, ignore.case = TRUE) ~ "Hogs",
+        grepl("sheep",  Description, perl = TRUE, ignore.case = TRUE) ~ "Sheep",
+        grepl("turkey",  Description, perl = TRUE, ignore.case = TRUE) ~ "Turkeys",
+        grepl("black|hispanic|asian|indian",  Description, perl = TRUE, ignore.case = TRUE)|grepl("race",  Description, perl = TRUE, ignore.case = TRUE) ~ "Race",
+        # grepl("hog|sheep|turkey|cattle|chicken",  Varmatch_edit2, perl = TRUE, ignore.case = TRUE) ~ "", 
+        # grepl("hogs",  Varmatch_edit2, perl = TRUE, ignore.case = TRUE) ~ "Hogs",
+        TRUE ~ "General"
+      ), 
+    descripfacet = 
+      case_when(
+        !is.na(rightside) ~  paste0(
+      category, " - ", leftside,"_", order, " (",rightside
+    ), 
+   grepl("concentration", Description, perl = TRUE, ignore.case =TRUE) ~ 
+     paste0(
+       category, " - ", gsub("Concentration.*", " Concentration", Description, perl = TRUE,ignore.case = TRUE)
+     ), 
+    TRUE ~ paste0(
+      category, " - ", Description
+    )
+      ) 
+     
+  )%>% 
+   mutate(
+     descripfacet =  coalesce(descripfacet, Description)
+     # case_when(
+     #   is.na(descripfacet) ~ Description, 
+     #   TRUE ~ descripfacet
+     # )
+   ) %>% 
+   filter(
+     (order >=1)|grepl("concentration", Description, perl = TRUE, ignore.case =TRUE), 
+     (grepl("operation", Description, perl = TRUE, ignore.case =TRUE)|grepl("concentration", Description, perl = TRUE, ignore.case =TRUE)
+       
+     ) , 
+     !(category %in% c("General"))#, 
+     # !grepl("sales",  Description, perl = TRUE, ignore.case =TRUE )
+   )  %>% 
+   group_by(
+     
+   )
+   
+ graphnass_empty <- crossing(
+   descripfacet = graphnass_out$descripfacet %>% unique(), 
+   year = c(graphnass_out$year %>%  min(), graphnass_out$year %>%  max())
+ ) %>% 
+   mutate(
+     emptytext = ""
+   )
+ require(cowplot)
+ graphnass_q <- 1
+ graphnass_vec <- graphnass_out$category %>% unique() %>% sort()
+ while(graphnass_q <=length(graphnass_vec))
+ {
+   graphnass_out_current <- graphnass_out %>% 
+     filter(
+       category == graphnass_vec[graphnass_q]
+     )
+
+graphnass_gg <- graphnass_out%>% 
+   # mutate(
+   #   year = 
+   # ) %>% 
+    ggplot(
+      aes(
+        x = year,
+        y= value#, 
+        # group = GEO_TYPE, 
+        # color = GEO_TYPE
+      )
+    ) + 
+   geom_point(
+     alpha = .8
+   ) + 
+   geom_line(
+     alpha = .8
+   ) + 
+    facet_wrap(~descripfacet, labeller = label_wrap_gen(width=60)) + 
+    theme_minimal() +
+  scale_y_continuous(labels = addUnits)
+
+graphnass_q <- graphnass_q +1
+ }
+  pdf(
+    paste0(graphnass_folderout,"/", graphnass_fileout, ".pdf"),
+  width = 60,
+    height = 35
+  )
+  print(
+    graphnass_gg
+  ) 
+
+  dev.off()
+}
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
