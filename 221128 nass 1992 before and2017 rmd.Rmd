@@ -3142,6 +3142,7 @@ graphnass_aggfunc <- function(graphnass_df, graphnass_folderout, graphnass_fileo
   graphnass_fileout =
     "231127_agg.pdf"
   graphnass_folderout="//jna_nol/asus/msi/work/NASS 1992 and before/r/images/aggregate stats"
+  graphnass_folderout = ""
   graphnass_df_bind <- graphnass_df %>% 
     bind_rows(
       concen_hist %>% 
@@ -3256,33 +3257,106 @@ graphnass_orderLU <- nassvarname_align %>%
      
   )%>% 
    mutate(
-     descripfacet =  coalesce(descripfacet, Description)
+     descripfacet =  coalesce(descripfacet, Description)#, 
+     # operation_with = gsub("Cattle - CATTLE, INCL CALVES - OPERATIONS WITH.*","Cattle - CATTLE, INCL CALVES - OPERATIONS WITH", Description, perl = TRUE )
      # case_when(
      #   is.na(descripfacet) ~ Description, 
      #   TRUE ~ descripfacet
      # )
    ) %>% 
    filter(
-     (order >=1)|grepl("concentration", Description, perl = TRUE, ignore.case =TRUE), 
+     (order >=1)|grepl("concentration", Description, perl = TRUE, ignore.case =TRUE),
      (grepl("operation", Description, perl = TRUE, ignore.case =TRUE)|grepl("concentration", Description, perl = TRUE, ignore.case =TRUE)
        
-     ) , 
-     !(category %in% c("General"))#, 
+     ) ,
+     !(category %in% c("General")),
+     !grepl("INVENTORY OF HOGS|INVENTORY OF CATTLE", 
+            Description, perl = TRUE, ignore.case = TRUE), 
+     !grepl("TURKEY", 
+            Description, perl = TRUE, ignore.case = TRUE)
      # !grepl("sales",  Description, perl = TRUE, ignore.case =TRUE )
    )  %>% 
    group_by(
-     
-   )
-   
- graphnass_empty <- crossing(
-   descripfacet = graphnass_out$descripfacet %>% unique(), 
-   year = c(graphnass_out$year %>%  min(), graphnass_out$year %>%  max())
- ) %>% 
+     category,year,  rightside 
+   ) %>% 
+   arrange(
+     rev( leftside)
+   ) %>% 
    mutate(
-     emptytext = ""
+     rownum = row_number()
+   ) %>% 
+   ungroup() %>% 
+   mutate(
+     keep = 
+       case_when(
+         !is.na(rightside ) & (rownum ==1 ) & (!is.na(order))  ~ "yes", 
+         !is.na(rightside ) & (rownum >1 ) & (!is.na(order)) ~ "no" , 
+         TRUE ~ "yes"
+       )
+   ) %>% 
+   filter(
+     keep == "yes"
+   ) %>% 
+   mutate(
+     descripfacet2 = qdapRegex::rm_between(
+       descripfacet, 
+       left = " - ", 
+       right = ";", 
+       replacement = " - "
+     ), 
+     descripfacet3 = gsub(
+       ".*; ", "", descripfacet
+     ), 
+     descripfacet3= case_when(
+       grepl("concentration", Description, perl = TRUE, ignore.case = TRUE,  
+     )
+     ~ paste0(" ", descripfacet3) , 
+     TRUE ~ descripfacet3
+     )
+   )
+  
+ graphnass_out_summary <- graphnass_out %>% 
+   group_by(
+     Description
+   ) %>% 
+   mutate(
+     lowval = min(value, na.rm = TRUE), 
+     maxval = max(value, na.rm = TRUE)
+   ) %>% 
+   ungroup() %>% 
+   filter(
+     (value == lowval)|(value == maxval)
+   ) %>%
+   mutate(
+     percentchange = (maxval - lowval)/(lowval),
+     pch_rev = (lowval - maxval)/(maxval)
+     # pch_year = 
+   ) %>% 
+   # group_by(Description, lowval, maxval, percentchange) %>% 
+   # slice(1) %>% 
+   # ungroup() %>% 
+   select(
+     year, descripfacet3 , value, percentchange,pch_rev, lowval, maxval
+   ) %>% 
+   arrange(
+     descripfacet3
+   )
+  
+  graphnass_out_summary_out <-graphnass_out %>% 
+    select(year, Description, value, category, order) %>% 
+    distinct() %>% 
+    spread(
+      key = year, 
+      value = value
+    )
+ graphnass_out_summary_out %>% 
+   writexl::write_xlsx(
+     "//jna_nol/asus/msi/work/NASS 1992 and before/var_names_after_1978/231128 nass data summary select/231128_nass_selectvars.xlsx"
    )
  require(cowplot)
  graphnass_q <- 1
+ rm(graphnass_gglist)
+ graphnass_gglist <- list()
  graphnass_vec <- graphnass_out$category %>% unique() %>% sort()
  while(graphnass_q <=length(graphnass_vec))
  {
@@ -3290,8 +3364,28 @@ graphnass_orderLU <- nassvarname_align %>%
      filter(
        category == graphnass_vec[graphnass_q]
      )
+  
+   graphnass_empty <- crossing(
+   descripfacet3 = graphnass_out_current$descripfacet3 %>% unique(), 
+   year = c(graphnass_out_current$year %>%  min(), graphnass_out$year %>%  max()) 
+ ) %>% 
+   left_join(
+     graphnass_out %>% 
+       select(descripfacet3, category) %>% 
+       distinct(),
+     by = c("descripfacet3")
+   ) %>% 
+   mutate(
+     emptytext = "", 
+     value = 0
+   )
 
-graphnass_gg <- graphnass_out%>% 
+   
+graphnass_empty_current <- graphnass_empty %>% 
+  filter(
+    category == graphnass_vec[graphnass_q]
+  )
+graphnass_gg <- graphnass_out_current%>% 
    # mutate(
    #   year = 
    # ) %>% 
@@ -3304,29 +3398,87 @@ graphnass_gg <- graphnass_out%>%
       )
     ) + 
    geom_point(
-     alpha = .8
+     alpha = .8, 
+     size = 3
    ) + 
    geom_line(
-     alpha = .8
+     alpha = .8, 
+     size =3
    ) + 
-    facet_wrap(~descripfacet, labeller = label_wrap_gen(width=60)) + 
-    theme_minimal() +
-  scale_y_continuous(labels = addUnits)
+  geom_text(
+        data = graphnass_empty_current,
+    aes(
+      x = year,
+      y = value,
+      label = emptytext
+    ), 
+    alpha = 0
+    
+  ) + 
+    facet_wrap(~descripfacet3,scales = "free", labeller = label_wrap_gen(width=15), nrow = 1) + 
+    theme_bw() +
+  scale_y_continuous(labels = addUnits) + 
+  # ggtitle(
+  #   "Decrease in small-medium poultry and livestock operations as concentration increased", 
+  #   "Data from USDA NASS Census - 1978 - Present"
+  # ) + 
+      theme(
+        text = element_text(size=50),
+        axis.text.x = element_text(size=50, angle =45,  vjust=1, hjust=1), 
+        strip.text.x = element_text(size = 45), 
+        axis.text.y = element_text(size = 50)
 
-graphnass_q <- graphnass_q +1
+        ) 
+graphnass_gglist[[graphnass_q]] <- graphnass_gg
+graphnass_q<-graphnass_q +1
+
  }
+ 
+ 
+graphnass_title <- ggdraw() + 
+  draw_label(
+    "Decrease in small-medium poultry and livestock operations as concentration increased",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+ 
+graphnass_ggcowplot <- plot_grid(
+  plotlist =graphnass_gglist , 
+  ncol = 1
+  )
+graphnass_ggcowplot_title <- plot_grid(
+  graphnass_title,
+  plotlist =graphnass_ggcowplot , 
+  ncol = 1, 
+    # rel_heights values control vertical title margins
+  rel_heights = c(0.1, 1)
+  )
   pdf(
-    paste0(graphnass_folderout,"/", graphnass_fileout, ".pdf"),
+    # paste0(graphnass_folderout,"/", graphnass_fileout, ".pdf"),
+        paste0(  graphnass_fileout, ".pdf"),
+
   width = 60,
-    height = 35
+    height = 40
   )
   print(
-    graphnass_gg
+    graphnass_ggcowplot
   ) 
 
   dev.off()
 }
 
+```
+# git
+```{r }
+# git add *
+# git commit -m "231128"
+# git push origin
 ```
 
 ## R Markdown
